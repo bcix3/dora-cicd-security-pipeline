@@ -29,7 +29,7 @@ jobs:
       contents: read
     env:
       SEMGREP_VERSION: "1.180.0"
-      SEMGREP_RULESETS: "owasp-top-ten javascript"
+      SEMGREP_RULESETS: "owasp-top-ten javascript nodejsscan"
     steps:
       - uses: actions/checkout@v7
 
