@@ -21,6 +21,11 @@ permissions:
   contents: read
   packages: write
 
+env:
+  # Shared by both Trivy jobs. The binary is checked against this hash.
+  TRIVY_VERSION: "0.75.0"
+  TRIVY_SHA256: "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f"
+
 jobs:
   sast:
     name: SAST (Semgrep)
@@ -98,9 +103,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-    env:
-      TRIVY_VERSION: "0.75.0"
-      TRIVY_SHA256: "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f"
     steps:
       - uses: actions/checkout@v7
 
@@ -133,6 +135,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       image: ${{ steps.name.outputs.image }}
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
 
@@ -151,12 +154,51 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/build-push-action@v7
+        id: push
         with:
           context: app
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.name.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  image-scan:
+    name: Container image (Trivy)
+    needs: build
+    # Scans the image as pushed to GHCR; on pull requests nothing is pushed.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Install Trivy
+        working-directory: ${{ runner.temp }}
+        run: |
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sfLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$tarball"
+          echo "$TRIVY_SHA256  $tarball" | sha256sum --check
+          tar xzf "$tarball" trivy
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: Scan pushed image
+        # Pulled by digest straight from the registry, so the scan covers exactly
+        # the bytes that deploy-dev runs and deploy-prod promotes.
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p results
+          trivy image --image-src remote --scanners vuln --no-progress --skip-version-check \
+            --format json --output results/trivy-image.json "${IMAGE%:*}@${DIGEST}"
+          trivy version --format json > results/trivy-db.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: trivy-image-results
+          path: results/
 
   deploy-dev:
     needs: build
