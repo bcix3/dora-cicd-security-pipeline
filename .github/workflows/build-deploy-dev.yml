@@ -222,3 +222,68 @@ jobs:
 
       - name: Deploy to dev
         run: scripts/deploy.sh dev "${{ needs.build.outputs.image }}"
+
+  dast:
+    name: DAST (ZAP baseline)
+    needs: [build, deploy-dev]
+    runs-on: [self-hosted, lab]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # Pinned by digest; -silent below stops ZAP updating add-ons at scan time,
+      # so the scan rules are exactly those baked into this image.
+      ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0@sha256:7aaa659b0d43078febd82e29bad112285c370727e86ab8340444220e17d9f0d2
+      EXPECTED_IMAGE: ${{ needs.build.outputs.image }}
+    steps:
+      - name: Check dev is running this build
+        id: target
+        run: |
+          cid=$(docker ps -q \
+            --filter label=com.docker.compose.project=nodegoat-dev \
+            --filter label=com.docker.compose.service=web)
+          [[ -n $cid ]] || { echo "::error::dev is not running"; exit 1; }
+          running=$(docker inspect --format '{{.Config.Image}}' "$cid")
+          if [[ $running != "$EXPECTED_IMAGE" ]]; then
+            echo "::error::dev is running $running, expected $EXPECTED_IMAGE"
+            exit 1
+          fi
+          network=$(docker inspect --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$cid")
+          echo "Scanning $running via network $network"
+          echo "network=$network" >> "$GITHUB_OUTPUT"
+
+      - name: Check NodeGoat is bound to loopback only
+        run: |
+          docker ps --filter label=com.docker.compose.service=web \
+            --format '{{.Label "com.docker.compose.project"}}: {{.Ports}}' | tee "$RUNNER_TEMP/ports.txt"
+          if grep -oE '[^ ,]+->' "$RUNNER_TEMP/ports.txt" | grep -qv '^127\.0\.0\.1:'; then
+            echo "::error::a NodeGoat port is published beyond 127.0.0.1"
+            exit 1
+          fi
+          echo "Listening TCP sockets on the lab VM:"
+          ss -tln
+
+      - name: ZAP baseline scan
+        # ZAP joins the dev tier's own Docker network and scans the app container
+        # directly, so it publishes no port on the VM.
+        env:
+          NETWORK: ${{ steps.target.outputs.network }}
+        run: |
+          out="$RUNNER_TEMP/zap"
+          mkdir -p "$out" && chmod 777 "$out"
+          docker pull -q "$ZAP_IMAGE"
+          # Record exactly which scan rule add-ons this image contains.
+          docker run --rm --entrypoint ls "$ZAP_IMAGE" /zap/plugin > "$out/zap-addons.txt"
+          rc=0
+          docker run --rm --network "$NETWORK" -v "$out:/zap/wrk:rw,z" "$ZAP_IMAGE" \
+            zap-baseline.py -t http://web:4000 -z "-silent" \
+              -J zap-report.json -r zap-report.html || rc=$?
+          # 1 = FAIL alerts, 2 = WARN alerts: findings, recorded not enforced.
+          # 3 = ZAP itself failed.
+          echo "zap-baseline exit code: $rc"
+          [[ $rc -le 2 ]] || exit "$rc"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zap-results
+          path: ${{ runner.temp }}/zap/
