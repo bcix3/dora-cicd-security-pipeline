@@ -3,6 +3,10 @@
 # Build runs on a GitHub-hosted runner (source only). Deploy runs on the
 # self-hosted runner in the lab VM, which is the only place NodeGoat ever runs.
 # The image built here is the exact artifact that deploy-prod.yml later promotes.
+#
+# Security scans run alongside the build on GitHub-hosted runners. Each scanner
+# only records its findings and uploads them as an artifact; it never fails the
+# run because of what it found. A job fails only if the tool itself errors.
 
 name: build-deploy-dev
 
@@ -18,6 +22,41 @@ permissions:
   packages: write
 
 jobs:
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SEMGREP_VERSION: "1.180.0"
+      SEMGREP_RULESETS: "owasp-top-ten javascript"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Semgrep
+        run: pipx install "semgrep==${SEMGREP_VERSION}"
+
+      - name: Snapshot rulesets
+        # Registry rulesets are not versioned, so the exact rules used are
+        # saved alongside the results.
+        run: |
+          mkdir -p results/semgrep-rules
+          for r in $SEMGREP_RULESETS; do
+            curl -sfL "https://semgrep.dev/c/p/$r" -o "results/semgrep-rules/$r.yaml"
+          done
+
+      - name: Scan app/
+        # Exits 0 when there are findings; non-zero only if the scan itself fails.
+        run: |
+          semgrep scan --metrics=off \
+            $(printf -- '--config results/semgrep-rules/%s.yaml ' $SEMGREP_RULESETS) \
+            --json --output results/semgrep.json app
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: semgrep-results
+          path: results/
+
   build:
     runs-on: ubuntu-latest
     outputs:
