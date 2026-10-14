@@ -93,6 +93,42 @@ jobs:
           name: gitleaks-results
           path: results/
 
+  sca:
+    name: SCA (Trivy)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      TRIVY_VERSION: "0.75.0"
+      TRIVY_SHA256: "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Trivy
+        working-directory: ${{ runner.temp }}
+        run: |
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sfLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$tarball"
+          echo "$TRIVY_SHA256  $tarball" | sha256sum --check
+          tar xzf "$tarball" trivy
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: Scan app/ dependencies
+        # Reads app/package-lock.json. Dev dependencies are excluded by default,
+        # matching the image's `npm install --production`. Exits 0 with findings.
+        run: |
+          mkdir -p results
+          trivy fs --scanners vuln --no-progress --skip-version-check \
+            --format json --output results/trivy-deps.json app
+          # The vulnerability DB is rebuilt daily and isn't versioned, so
+          # record which one this scan used.
+          trivy version --format json > results/trivy-db.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: trivy-deps-results
+          path: results/
+
   build:
     runs-on: ubuntu-24.04
     outputs:
