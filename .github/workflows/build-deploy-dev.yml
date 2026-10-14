@@ -24,7 +24,7 @@ permissions:
 jobs:
   sast:
     name: SAST (Semgrep)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     env:
@@ -58,7 +58,7 @@ jobs:
           path: results/
 
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       image: ${{ steps.name.outputs.image }}
     steps:
