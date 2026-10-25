@@ -6,6 +6,7 @@ Run with:  python3 -m unittest discover -s tests
 """
 
 import contextlib
+import copy
 import io
 import json
 import shutil
@@ -95,6 +96,53 @@ class TestDedup(unittest.TestCase):
             "both": 1, "sca_only": 1, "image_only": 0, "image_base": 1, "image_os": 2})
 
 
+class TestChanges(unittest.TestCase):
+    def setUp(self):
+        self.findings = [f for s in aggregate.STAGES
+                         for f in aggregate.load(FIXTURES, s)]
+
+    def previous(self, findings, not_run=()):
+        return {"findings": copy.deepcopy(findings), "not_run": list(not_run)}
+
+    def test_no_changes(self):
+        c = aggregate.changes(self.findings, self.previous(self.findings), [])
+        self.assertEqual((c["new"], c["resolved"], c["rerated"]), ([], [], []))
+
+    def test_new_resolved_and_rerated(self):
+        prev = self.previous(self.findings)
+        gone = prev["findings"].pop(0)                    # new in this run
+        prev["findings"].append(dict(gone, rule="old-rule", location="x.js:1"))
+        sca = next(f for f in prev["findings"] if f["stage"] == "sca")
+        sca["severity"] = "Medium"                        # re-rated since
+        c = aggregate.changes(self.findings, prev, [])
+        self.assertEqual([f["rule"] for f in c["new"]], [gone["rule"]])
+        self.assertEqual([f["rule"] for f in c["resolved"]], ["old-rule"])
+        [(before, now)] = c["rerated"]
+        self.assertEqual((before["severity"], now["severity"]), ("Medium", "High"))
+
+    def test_zap_identified_by_rule_only(self):
+        # A different instance count or example URL is the same alert type.
+        prev = self.previous(self.findings)
+        for f in prev["findings"]:
+            if f["stage"] == "dast":
+                f["location"] = "1 instance(s), e.g. http://web:4000/other"
+        c = aggregate.changes(self.findings, prev, [])
+        self.assertEqual((c["new"], c["resolved"]), ([], []))
+
+    def test_image_copies_count_once(self):
+        prev = self.previous([f for f in self.findings if f["title"] !=
+                              "CVE-2019-20149 kind-of@6.0.2"])
+        c = aggregate.changes(self.findings, prev, [])
+        self.assertEqual(sorted(f["stage"] for f in c["new"]), ["image", "sca"])
+
+    def test_stage_not_run_in_either_run_is_not_compared(self):
+        prev = self.previous([f for f in self.findings if f["stage"] != "dast"],
+                             not_run=["dast"])
+        c = aggregate.changes(self.findings, prev, [])
+        self.assertNotIn("dast", c["compared"])
+        self.assertEqual(c["new"], [])
+
+
 class TestGate(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -116,7 +164,7 @@ class TestGate(unittest.TestCase):
         self.assertEqual(result["blocking"], {"SAST": 1, "Secrets": 1, "SCA": 1,
                                               "Container image": 4})
         report = (self.tmp / "aggregated-report.md").read_text()
-        self.assertIn("# Security report: gate FAILED", report)
+        self.assertIn("**Gate FAILED.** Critical or High findings in 4 of 5 stages run", report)
 
     def test_report_only_records_failure_but_exits_0(self):
         rc, _ = self.run_main("--report-only")
@@ -135,7 +183,7 @@ class TestGate(unittest.TestCase):
                               "--not-run", "sca", "--not-run", "image")
         self.assertEqual(rc, 0)
         report = (self.tmp / "aggregated-report.md").read_text()
-        self.assertIn("# Security report: gate PASSED", report)
+        self.assertIn("**Gate PASSED.**", report)
         self.assertIn("**Partial result.**", report)
 
     def test_missing_input_is_an_error(self):
@@ -150,7 +198,26 @@ class TestGate(unittest.TestCase):
         rc, _ = self.run_main("--not-run", "dast")
         self.assertEqual(rc, 1)
         report = (self.tmp / "aggregated-report.md").read_text()
-        self.assertIn("| DAST | ZAP baseline | – |", report)
+        self.assertIn("| DAST | ZAP baseline | ⏭️ not run |", report)
+
+    def test_report_compares_with_previous(self):
+        self.run_main()
+        previous = self.tmp / "previous.json"
+        (self.tmp / "aggregated.json").rename(previous)
+        raw = json.loads(previous.read_text())
+        raw["run"], raw["url"] = "123", "https://example.invalid/runs/123"
+        raw["findings"] = [f for f in raw["findings"] if f["stage"] != "secrets"]
+        previous.write_text(json.dumps(raw))
+        rc, _ = self.run_main("--previous", str(previous))
+        self.assertEqual(rc, 1)
+        report = (self.tmp / "aggregated-report.md").read_text()
+        self.assertIn("Compared with [run 123](https://example.invalid/runs/123)", report)
+        self.assertIn("| Secrets | 1 | 0 | 0 |", report)
+
+    def test_missing_previous_is_an_error(self):
+        rc, err = self.run_main("--previous", str(self.tmp / "nope.json"))
+        self.assertEqual(rc, 2)
+        self.assertIn("previous run", err)
 
     def test_unknown_severity_is_an_error(self):
         path = self.tmp / "semgrep-results" / "semgrep.json"

@@ -300,6 +300,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read  # previous run's aggregate-results
     outputs:
       verdict: ${{ steps.aggregate.outputs.verdict }}
       blocking: ${{ steps.aggregate.outputs.blocking }}
@@ -316,6 +317,24 @@ jobs:
           pattern: "*-results"
           path: results
 
+      - name: Fetch previous run's results
+        # For the "changes since the previous run" section: the newest
+        # aggregate-results from another run on main. If there is none (first
+        # run, or the artifact expired), that section says so.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=aggregate-results&per_page=100" \
+            --jq "[.artifacts[] | select(.expired | not)
+                   | select(.workflow_run.head_branch == \"main\" and .workflow_run.id != $GITHUB_RUN_ID)]
+                  | sort_by(.created_at) | last | .workflow_run.id // empty")
+          if [[ -n $prev ]]; then
+            gh run download "$prev" -R "$GITHUB_REPOSITORY" -n aggregate-results -D previous
+            echo "Comparing with run $prev"
+          else
+            echo "No previous run to compare with"
+          fi
+
       - name: Aggregate
         id: aggregate
         # Exit 2 = a result is missing or unreadable. The image scan and DAST
@@ -324,10 +343,11 @@ jobs:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
         run: |
-          not_run=()
-          [[ $EVENT == pull_request ]] && not_run+=(--not-run image)
-          [[ $EVENT == pull_request || $REF != refs/heads/main ]] && not_run+=(--not-run dast)
-          python3 scripts/aggregate.py results --report-only "${not_run[@]}"
+          args=()
+          [[ $EVENT == pull_request ]] && args+=(--not-run image)
+          [[ $EVENT == pull_request || $REF != refs/heads/main ]] && args+=(--not-run dast)
+          [[ -f previous/aggregated.json ]] && args+=(--previous previous/aggregated.json)
+          python3 scripts/aggregate.py results --report-only "${args[@]}"
           python3 - >> "$GITHUB_OUTPUT" <<'PY'
           import json
           r = json.load(open("results/aggregated.json"))
