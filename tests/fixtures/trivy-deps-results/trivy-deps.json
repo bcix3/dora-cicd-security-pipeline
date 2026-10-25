@@ -1,0 +1,69 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.75.0"
+  },
+  "ReportID": "01a13c34-a4aa-72ce-b4e6-789346eebe3d",
+  "CreatedAt": "2026-10-14T20:57:25.418186257Z",
+  "ArtifactName": "app",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "package-lock.json",
+      "Class": "lang-pkgs",
+      "Type": "npm",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2019-20149",
+          "VendorIDs": [
+            "GHSA-6c8f-qphg-qjgp"
+          ],
+          "PkgID": "kind-of@6.0.2",
+          "PkgName": "kind-of",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/kind-of@6.0.2",
+            "UID": "7cd5bcecff25a0fc"
+          },
+          "InstalledVersion": "6.0.2",
+          "FixedVersion": "6.0.3",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2019-20149",
+          "Fingerprint": "sha256:66ab9e2d0e1faf6289e558c1bcdd1cc21bab17477dfd44c6b0b5881e6f1dd22b",
+          "Title": "nodejs-kind-of: ctorName in index.js allows external user input to overwrite certain internal attributes",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-668"
+          ],
+          "PublishedDate": "2019-12-30T19:15:11.91Z",
+          "LastModifiedDate": "2026-06-17T02:30:00.723Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2017-16137",
+          "VendorIDs": [
+            "GHSA-gxpj-cx7g-858c"
+          ],
+          "PkgID": "debug@4.1.1",
+          "PkgName": "debug",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/debug@4.1.1",
+            "UID": "f49c5f30efa24763"
+          },
+          "InstalledVersion": "4.1.1",
+          "FixedVersion": "2.6.9, 3.1.0, 3.2.7, 4.3.1",
+          "Status": "fixed",
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2017-16137",
+          "Fingerprint": "sha256:85d5b0e2ac779e675069eeea50c1c34de6b0d30c0d01afcb0f77854717b964df",
+          "Title": "nodejs-debug: Regular expression Denial of Service",
+          "Severity": "LOW",
+          "CweIDs": [
+            "CWE-400"
+          ],
+          "PublishedDate": "2018-06-07T02:29:03.817Z",
+          "LastModifiedDate": "2026-06-17T01:08:51.513Z"
+        }
+      ]
+    }
+  ]
+}

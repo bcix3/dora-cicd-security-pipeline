@@ -1,0 +1,77 @@
+{
+  "@programName": "ZAP",
+  "@version": "2.17.0",
+  "@generated": "Wed, 14 Oct 2026 21:01:21",
+  "created": "2026-10-14T21:01:21.852272336Z",
+  "site": [
+    {
+      "@name": "http://web:4000",
+      "@host": "web",
+      "@port": "4000",
+      "@ssl": "false",
+      "alerts": [
+        {
+          "pluginid": "10020",
+          "alertRef": "10020-1",
+          "alert": "Missing Anti-clickjacking Header",
+          "name": "Missing Anti-clickjacking Header",
+          "riskcode": "2",
+          "confidence": "2",
+          "riskdesc": "Medium (Medium)",
+          "desc": "",
+          "instances": [
+            {
+              "id": "3",
+              "uri": "http://web:4000",
+              "nodeName": "http://web:4000",
+              "method": "GET",
+              "param": "x-frame-options",
+              "attack": "",
+              "evidence": "",
+              "otherinfo": ""
+            }
+          ],
+          "count": "5",
+          "systemic": true,
+          "solution": "",
+          "otherinfo": "",
+          "reference": "",
+          "cweid": "1021",
+          "wascid": "15",
+          "sourceid": "1"
+        },
+        {
+          "pluginid": "10111",
+          "alertRef": "10111",
+          "alert": "Authentication Request Identified",
+          "name": "Authentication Request Identified",
+          "riskcode": "0",
+          "confidence": "3",
+          "riskdesc": "Informational (High)",
+          "desc": "",
+          "instances": [
+            {
+              "id": "80",
+              "uri": "http://web:4000/login",
+              "nodeName": "http://web:4000/login ()(_csrf,password,userName)",
+              "method": "POST",
+              "param": "userName",
+              "attack": "",
+              "evidence": "password",
+              "otherinfo": "userParam=userName\nuserValue=ZAP\npasswordParam=password\nreferer=http://web:4000/login\ncsrfToken=_csrf"
+            }
+          ],
+          "count": "1",
+          "systemic": false,
+          "solution": "",
+          "otherinfo": "",
+          "reference": "",
+          "cweid": "-1",
+          "wascid": "-1",
+          "sourceid": "68"
+        }
+      ]
+    }
+  ],
+  "sequences": []
+}

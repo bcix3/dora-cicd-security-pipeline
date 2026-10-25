@@ -1,0 +1,19 @@
+[
+  {
+    "RuleID": "private-key",
+    "Description": "Identified a Private Key, which may compromise cryptographic security and sensitive data encryption.",
+    "StartLine": 1,
+    "EndLine": 15,
+    "StartColumn": 1,
+    "EndColumn": 30,
+    "Match": "REDACTED",
+    "Secret": "REDACTED",
+    "File": "app/artifacts/cert/server.key",
+    "SymlinkFile": "",
+    "Commit": "d8592a9e71c01555e77f46897f961618f0e9dac1",
+    "Link": "https://github.com/bcix3/dora-cicd-security-pipeline/blob/d8592a9e71c01555e77f46897f961618f0e9dac1/app/artifacts/cert/server.key#L1-L15",
+    "Entropy": 5.9881105,
+    "Tags": [],
+    "Fingerprint": "d8592a9e71c01555e77f46897f961618f0e9dac1:app/artifacts/cert/server.key:private-key:1"
+  }
+]

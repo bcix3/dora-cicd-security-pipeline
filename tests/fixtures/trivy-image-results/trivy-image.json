@@ -1,0 +1,183 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.75.0"
+  },
+  "ReportID": "01a13c35-4f69-72a7-bc2f-1d0a45164662",
+  "CreatedAt": "2026-10-14T20:58:09.12917633Z",
+  "ArtifactID": "sha256:f810b578126b8c12c8981b7370f19cba39b5403c0947a9ab503ca5e035b409d1",
+  "ArtifactName": "ghcr.io/bcix3/dora-cicd-security-pipeline@sha256:2d829150d6cb5bfab1521b37c750fd24397a421da4eec332c45f134858c37906",
+  "ArtifactType": "container_image",
+  "Metadata": {
+    "Size": 118953984,
+    "OS": {
+      "Family": "alpine",
+      "Name": "3.15.4",
+      "EOSL": true
+    },
+    "ImageID": "sha256:5443810f0e6d0e1c8e39c52f036ef7dd96d67b9f4eb1f420531a1a3cfd3fc338",
+    "RepoDigests": [
+      "ghcr.io/bcix3/dora-cicd-security-pipeline@sha256:2d829150d6cb5bfab1521b37c750fd24397a421da4eec332c45f134858c37906"
+    ],
+    "Reference": "ghcr.io/bcix3/dora-cicd-security-pipeline@sha256:2d829150d6cb5bfab1521b37c750fd24397a421da4eec332c45f134858c37906"
+  },
+  "Results": [
+    {
+      "Target": "ghcr.io/bcix3/dora-cicd-security-pipeline@sha256:2d829150d6cb5bfab1521b37c750fd24397a421da4eec332c45f134858c37906 (alpine 3.15.4)",
+      "Class": "os-pkgs",
+      "Type": "alpine",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2022-4450",
+          "PkgID": "libcrypto1.1@1.1.1n-r0",
+          "PkgName": "libcrypto1.1",
+          "PkgIdentifier": {
+            "PURL": "pkg:apk/alpine/libcrypto1.1@1.1.1n-r0?arch=x86_64&distro=3.15.4",
+            "UID": "41b82776bc82eea5"
+          },
+          "InstalledVersion": "1.1.1n-r0",
+          "FixedVersion": "1.1.1t-r0",
+          "Status": "fixed",
+          "Layer": {
+            "Digest": "sha256:df9b9388f04ad6279a7410b85cedfdcb2208c0a003da7ab5613af71079148139",
+            "DiffID": "sha256:4fc242d58285699eca05db3cc7c7122a2b8e014d9481f323bd9277baacfa0628"
+          },
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-4450",
+          "Fingerprint": "sha256:f10f41d3b6a11da5c84f624bfb35fe461bd6d8194d703bd689eca32235afb2e7",
+          "Title": "openssl: double free after calling PEM_read_bio_ex",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-415"
+          ],
+          "PublishedDate": "2023-02-08T20:15:23.973Z",
+          "LastModifiedDate": "2026-10-14T15:17:00.197Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2022-4450",
+          "PkgID": "libssl1.1@1.1.1n-r0",
+          "PkgName": "libssl1.1",
+          "PkgIdentifier": {
+            "PURL": "pkg:apk/alpine/libssl1.1@1.1.1n-r0?arch=x86_64&distro=3.15.4",
+            "UID": "f1628dd56b0b88de"
+          },
+          "InstalledVersion": "1.1.1n-r0",
+          "FixedVersion": "1.1.1t-r0",
+          "Status": "fixed",
+          "Layer": {
+            "Digest": "sha256:df9b9388f04ad6279a7410b85cedfdcb2208c0a003da7ab5613af71079148139",
+            "DiffID": "sha256:4fc242d58285699eca05db3cc7c7122a2b8e014d9481f323bd9277baacfa0628"
+          },
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2022-4450",
+          "Fingerprint": "sha256:77694449e788c6117b6fad469a74ea642b19a6984dce6f95f259fae825919f33",
+          "Title": "openssl: double free after calling PEM_read_bio_ex",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-415"
+          ],
+          "PublishedDate": "2023-02-08T20:15:23.973Z",
+          "LastModifiedDate": "2026-10-14T15:17:00.197Z"
+        }
+      ]
+    },
+    {
+      "Target": "Node.js",
+      "Class": "lang-pkgs",
+      "Type": "node-pkg",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2019-20149",
+          "VendorIDs": [
+            "GHSA-6c8f-qphg-qjgp"
+          ],
+          "PkgID": "kind-of@6.0.2",
+          "PkgName": "kind-of",
+          "PkgPath": "home/node/app/node_modules/base/node_modules/kind-of/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/kind-of@6.0.2",
+            "UID": "acff7db7bfd4c6e7"
+          },
+          "InstalledVersion": "6.0.2",
+          "FixedVersion": "6.0.3",
+          "Status": "fixed",
+          "Layer": {
+            "Digest": "sha256:243ad313246d3636ecb17b992278eeacd128263fd1ce8b704e830028b38830be",
+            "DiffID": "sha256:9188a58dd0143e794813bf23e6476bdbe7cde32f0deb0369d7cb59ccf8e1fa42"
+          },
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2019-20149",
+          "Fingerprint": "sha256:b7bd5d7c588d93eb765d5b8e3b07fd12b41a8a553085270aaf5faf16dca3621b",
+          "Title": "nodejs-kind-of: ctorName in index.js allows external user input to overwrite certain internal attributes",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-668"
+          ],
+          "PublishedDate": "2019-12-30T19:15:11.91Z",
+          "LastModifiedDate": "2026-06-17T02:30:00.723Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2019-20149",
+          "VendorIDs": [
+            "GHSA-6c8f-qphg-qjgp"
+          ],
+          "PkgID": "kind-of@6.0.2",
+          "PkgName": "kind-of",
+          "PkgPath": "home/node/app/node_modules/define-property/node_modules/kind-of/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/kind-of@6.0.2",
+            "UID": "2532034df53ed7e2"
+          },
+          "InstalledVersion": "6.0.2",
+          "FixedVersion": "6.0.3",
+          "Status": "fixed",
+          "Layer": {
+            "Digest": "sha256:243ad313246d3636ecb17b992278eeacd128263fd1ce8b704e830028b38830be",
+            "DiffID": "sha256:9188a58dd0143e794813bf23e6476bdbe7cde32f0deb0369d7cb59ccf8e1fa42"
+          },
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2019-20149",
+          "Fingerprint": "sha256:b7bd5d7c588d93eb765d5b8e3b07fd12b41a8a553085270aaf5faf16dca3621b",
+          "Title": "nodejs-kind-of: ctorName in index.js allows external user input to overwrite certain internal attributes",
+          "Severity": "HIGH",
+          "CweIDs": [
+            "CWE-668"
+          ],
+          "PublishedDate": "2019-12-30T19:15:11.91Z",
+          "LastModifiedDate": "2026-06-17T02:30:00.723Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2025-69873",
+          "VendorIDs": [
+            "GHSA-2g4f-4pwh-qvx6"
+          ],
+          "PkgID": "ajv@6.12.6",
+          "PkgName": "ajv",
+          "PkgPath": "usr/local/lib/node_modules/npm/node_modules/har-validator/node_modules/ajv/package.json",
+          "PkgIdentifier": {
+            "PURL": "pkg:npm/ajv@6.12.6",
+            "UID": "e0afbbdb8adec859"
+          },
+          "InstalledVersion": "6.12.6",
+          "FixedVersion": "8.18.0, 6.14.0",
+          "Status": "fixed",
+          "Layer": {
+            "Digest": "sha256:3bf6d738020517f4622814e8c21db4b4aaa78ae7cab4e4f872c11696886c6285",
+            "DiffID": "sha256:dfd8c046c602fe809a5c48bd19e894c53ad36d39d7ea4ff13ee2fa2447e82d79"
+          },
+          "SeveritySource": "ghsa",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2025-69873",
+          "Fingerprint": "sha256:76a4725b341d101e94aa5e92cb2c11222cb451736da6e4a394695e423bcc2382",
+          "Title": "ajv: ReDoS via $data reference",
+          "Severity": "MEDIUM",
+          "CweIDs": [
+            "CWE-1333",
+            "CWE-400"
+          ],
+          "PublishedDate": "2026-02-11T19:15:50.467Z",
+          "LastModifiedDate": "2026-09-10T13:17:29.42Z"
+        }
+      ]
+    }
+  ]
+}

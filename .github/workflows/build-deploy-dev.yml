@@ -7,6 +7,7 @@
 # Security scans run alongside the build on GitHub-hosted runners. Each scanner
 # only records its findings and uploads them as an artifact; it never fails the
 # run because of what it found. A job fails only if the tool itself errors.
+# The aggregate job alone applies the pass/fail gate to all of them.
 
 name: build-deploy-dev
 
@@ -287,3 +288,53 @@ jobs:
         with:
           name: zap-results
           path: ${{ runner.temp }}/zap/
+
+  aggregate:
+    name: Aggregate + gate
+    needs: [sast, secrets, sca, image-scan, dast]
+    # Runs even when a scan job failed or was skipped. A failed scan uploads
+    # nothing, and a missing result fails the gate as an input error.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Test aggregate.py
+        run: python3 -m unittest discover -s tests
+
+      - uses: actions/download-artifact@v8
+        with:
+          # One folder per artifact; excludes the build cache artifact.
+          pattern: "*-results"
+          path: results
+
+      - name: Aggregate and apply gate
+        # Exit 1 = gate failed (any Critical/High), 2 = a result is missing or
+        # unreadable. The image scan and DAST run only for main, so elsewhere
+        # they are reported as not run instead of missing.
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          not_run=()
+          [[ $EVENT == pull_request ]] && not_run+=(--not-run image)
+          [[ $EVENT == pull_request || $REF != refs/heads/main ]] && not_run+=(--not-run dast)
+          python3 scripts/aggregate.py results "${not_run[@]}"
+
+      - name: Job summary
+        if: always()
+        run: |
+          if [[ -f results/aggregated-report.md ]]; then
+            cat results/aggregated-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: aggregate-results
+          path: |
+            results/aggregated-report.md
+            results/aggregated.json
+          if-no-files-found: ignore

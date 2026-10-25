@@ -1,0 +1,123 @@
+{
+  "version": "1.180.0",
+  "results": [
+    {
+      "check_id": "results.semgrep-rules.ajinabraham.njsscan.crypto.crypto_node.node_insecure_random_generator",
+      "path": "app/app/data/user-dao.js",
+      "start": {
+        "line": 51,
+        "col": 33,
+        "offset": 1606
+      },
+      "end": {
+        "line": 51,
+        "col": 46,
+        "offset": 1619
+      },
+      "extra": {
+        "message": "crypto.pseudoRandomBytes()/Math.random() is a cryptographically weak random number generator.",
+        "metadata": {
+          "owasp-web": "a9",
+          "cwe": "cwe-327",
+          "license": "LGPL-3.0-or-later",
+          "vulnerability_class": [
+            "Other"
+          ],
+          "source": "https://semgrep.dev/r/ajinabraham.njsscan.crypto.crypto_node.node_insecure_random_generator",
+          "shortlink": "https://sg.run/ABG8"
+        },
+        "severity": "WARNING",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    },
+    {
+      "check_id": "results.semgrep-rules.javascript.lang.security.audit.code-string-concat.code-string-concat",
+      "path": "app/app/routes/contributions.js",
+      "start": {
+        "line": 32,
+        "col": 24,
+        "offset": 934
+      },
+      "end": {
+        "line": 32,
+        "col": 45,
+        "offset": 955
+      },
+      "extra": {
+        "message": "Found data from an Express or Next web request flowing to `eval`. If this data is user-controllable this can lead to execution of arbitrary system commands in the context of your application process. Avoid `eval` whenever possible.",
+        "metadata": {
+          "interfile": true,
+          "confidence": "HIGH",
+          "owasp": [
+            "A03:2021 - Injection",
+            "A05:2025 - Injection"
+          ],
+          "cwe": [
+            "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+          ],
+          "category": "security",
+          "technology": [
+            "node.js",
+            "Express",
+            "Next.js"
+          ],
+          "subcategory": [
+            "vuln"
+          ],
+          "likelihood": "MEDIUM",
+          "impact": "MEDIUM",
+          "license": "Semgrep Rules License v1.0. For more details, visit semgrep.dev/legal/rules-license",
+          "vulnerability_class": [
+            "Code Injection"
+          ],
+          "source": "https://semgrep.dev/r/javascript.lang.security.audit.code-string-concat.code-string-concat",
+          "shortlink": "https://sg.run/96Yk"
+        },
+        "severity": "ERROR",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    },
+    {
+      "check_id": "results.semgrep-rules.ajinabraham.njsscan.headers.header_cookie.cookie_session_default",
+      "path": "app/server.js",
+      "start": {
+        "line": 78,
+        "col": 13,
+        "offset": 2837
+      },
+      "end": {
+        "line": 102,
+        "col": 7,
+        "offset": 3439
+      },
+      "extra": {
+        "message": "Consider changing the default session cookie name. An attacker can use it to fingerprint the server and target attacks accordingly.",
+        "metadata": {
+          "cwe": "cwe-522",
+          "owasp-web": "a2",
+          "license": "LGPL-3.0-or-later",
+          "vulnerability_class": [
+            "Other"
+          ],
+          "source": "https://semgrep.dev/r/ajinabraham.njsscan.headers.header_cookie.cookie_session_default",
+          "shortlink": "https://sg.run/jGpJ"
+        },
+        "severity": "INFO",
+        "fingerprint": "requires login",
+        "lines": "requires login",
+        "validation_state": "NO_VALIDATOR",
+        "engine_kind": "OSS"
+      }
+    }
+  ],
+  "errors": [],
+  "paths": {
+    "scanned": []
+  }
+}
