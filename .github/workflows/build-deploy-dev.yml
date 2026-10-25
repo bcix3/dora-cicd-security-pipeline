@@ -4,11 +4,15 @@
 # self-hosted runner in the lab VM, which is the only place NodeGoat ever runs.
 # The image built here is the exact artifact that deploy-prod.yml later promotes.
 #
-# Security scans run alongside the build on GitHub-hosted runners. Each scanner
-# only records its findings and uploads them as an artifact; it never fails the
-# run because of what it found. A job fails only if the tool itself errors.
-# The report job combines their results and the gate job alone enforces the
-# pass/fail criteria.
+# Security scans run alongside the build. Each scanner only records its findings
+# and uploads them as an artifact; it never fails the run because of what it
+# found. A job fails only if the tool itself errors. The report job combines
+# their results and the gate job alone enforces the pass/fail criteria.
+#
+# The static scans (SAST, secrets, SCA, image) run on GitHub-hosted runners
+# unless the repository variable STATIC_RUNNER is "lab", which moves them to the
+# self-hosted lab runner. Pull requests always use GitHub-hosted runners, so
+# code that hasn't been merged never runs on the lab VM.
 
 name: build-deploy-dev
 
@@ -31,17 +35,15 @@ env:
 jobs:
   sast:
     name: SAST (Semgrep)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.STATIC_RUNNER == 'lab' && github.event_name != 'pull_request' && fromJSON('["self-hosted", "lab"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     env:
-      SEMGREP_VERSION: "1.180.0"
+      # Official image, pinned by digest, so both runner types run the same build.
+      SEMGREP_IMAGE: semgrep/semgrep:1.180.0@sha256:529ee8a277ec8adc5b534d7c74eea0a47e9de21d62852b6ba7ac6ba9566845c3
       SEMGREP_RULESETS: "owasp-top-ten javascript nodejsscan"
     steps:
       - uses: actions/checkout@v7
-
-      - name: Install Semgrep
-        run: pipx install "semgrep==${SEMGREP_VERSION}"
 
       - name: Snapshot rulesets
         # Registry rulesets are not versioned, so the exact rules used are
@@ -54,10 +56,14 @@ jobs:
 
       - name: Scan app/
         # Exits 0 when there are findings; non-zero only if the scan itself fails.
+        # Runs as the runner's user so its output isn't root-owned on the lab VM;
+        # :z relabels the mount for SELinux there and is ignored elsewhere.
         run: |
-          semgrep scan --metrics=off \
-            $(printf -- '--config results/semgrep-rules/%s.yaml ' $SEMGREP_RULESETS) \
-            --json --output results/semgrep.json app
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD:/src:z" -w /src "$SEMGREP_IMAGE" \
+            semgrep scan --metrics=off \
+              $(printf -- '--config results/semgrep-rules/%s.yaml ' $SEMGREP_RULESETS) \
+              --json --output results/semgrep.json app
 
       - uses: actions/upload-artifact@v7
         with:
@@ -66,7 +72,7 @@ jobs:
 
   secrets:
     name: Secrets (Gitleaks)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.STATIC_RUNNER == 'lab' && github.event_name != 'pull_request' && fromJSON('["self-hosted", "lab"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     env:
@@ -104,7 +110,7 @@ jobs:
 
   sca:
     name: SCA (Trivy)
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.STATIC_RUNNER == 'lab' && github.event_name != 'pull_request' && fromJSON('["self-hosted", "lab"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     steps:
@@ -122,6 +128,9 @@ jobs:
       - name: Scan app/ dependencies
         # Reads app/package-lock.json. Dev dependencies are excluded by default,
         # matching the image's `npm install --production`. Exits 0 with findings.
+        # The DB cache is per job, so the lab runner doesn't reuse an older DB.
+        env:
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
         run: |
           mkdir -p results
           trivy fs --scanners vuln --no-progress --skip-version-check \
@@ -171,7 +180,7 @@ jobs:
     needs: build
     # Scans the image as pushed to GHCR; on pull requests nothing is pushed.
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.STATIC_RUNNER == 'lab' && github.event_name != 'pull_request' && fromJSON('["self-hosted", "lab"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
       packages: read
@@ -193,6 +202,7 @@ jobs:
           DIGEST: ${{ needs.build.outputs.digest }}
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
         run: |
           mkdir -p results
           trivy image --image-src remote --scanners vuln --no-progress --skip-version-check \
