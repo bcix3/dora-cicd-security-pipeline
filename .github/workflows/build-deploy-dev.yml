@@ -94,6 +94,8 @@ jobs:
           mkdir -p results
           gitleaks git --no-banner --redact --exit-code 0 \
             --report-format json --report-path results/gitleaks.json .
+          # The report doesn't say which version produced it.
+          gitleaks version > results/gitleaks-version.txt
 
       - uses: actions/upload-artifact@v7
         with:

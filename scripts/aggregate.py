@@ -21,8 +21,10 @@ aggregated.json and adds the new, resolved and re-rated findings to the report.
 import argparse
 import json
 import os
+import re
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 # Common severity scale, most severe first.
@@ -45,6 +47,10 @@ NODEJSSCAN_MARKER = "ajinabraham.njsscan"
 
 # WORKDIR of NodeGoat in the image (app/Dockerfile).
 IMAGE_APP_ROOT = "home/node/app/"
+
+DEPENDENCY_STAGES = ("sca", "image")
+ZAP_ALERT_URL = "https://www.zaproxy.org/docs/alerts/{}/"
+CWE_URL = "https://cwe.mitre.org/data/definitions/{}.html"
 
 STAGES = {
     "sast": ("SAST", "Semgrep", "semgrep-results/semgrep.json"),
@@ -85,6 +91,7 @@ def parse_semgrep(raw):
             "severity": mapped(SEMGREP_SEVERITY, r["extra"]["severity"], "semgrep"),
             "cwe": cwe_ids(r["extra"]["metadata"].get("cwe")),
             "ruleset": "nodejsscan" if NODEJSSCAN_MARKER in rule else "standard",
+            "url": r["extra"]["metadata"].get("source"),
         }
 
 
@@ -97,6 +104,7 @@ def parse_gitleaks(raw):
             "raw_severity": "-",
             "severity": GITLEAKS_SEVERITY,
             "cwe": [],
+            "location_url": r.get("Link"),  # the file at the leaking commit
         }
 
 
@@ -121,6 +129,8 @@ def parse_trivy(raw):
                 "cwe": cwe_ids(v.get("CweIDs")),
                 "package": f"{v['PkgName']}@{v['InstalledVersion']}",
                 "component": component,
+                "fixed": v.get("FixedVersion", ""),
+                "url": v.get("PrimaryURL"),
             }
 
 
@@ -136,6 +146,7 @@ def parse_zap(raw):
                 "raw_severity": a["riskdesc"],
                 "severity": mapped(ZAP_SEVERITY, a["riskcode"], "zap"),
                 "cwe": [f"CWE-{a['cweid']}"] if a["cweid"] not in ("", "-1", "0") else [],
+                "url": ZAP_ALERT_URL.format(a["pluginid"]),
             }
 
 
@@ -162,9 +173,17 @@ def dedup_key(f):
     # lockfile scan, the image scan, or both report it, and however many paths
     # it is installed at. App and base-image copies stay separate: they are fixed
     # in different places.
-    if f["stage"] in ("sca", "image"):
+    if f["stage"] in DEPENDENCY_STAGES:
         return ("package", f["component"], f["title"])
     return (f["stage"], f["rule"], f["location"])
+
+
+def group_key(f):
+    # For listing: Semgrep often reports one line under two rules (e.g.
+    # eval_nodejs and code-string-concat), which is one row to read.
+    if f["stage"] == "sast":
+        return ("sast", f["location"])
+    return dedup_key(f)
 
 
 def combine(findings):
@@ -194,6 +213,27 @@ def trivy_db_date(results_dir, artifact):
         return None
 
 
+def tool_version(results_dir, stage):
+    # Provenance only: a missing version is reported as such, not an error.
+    folder, name = STAGES[stage][2].split("/")
+    try:
+        if stage == "secrets":  # the report has none; the job saves `gitleaks version`
+            return (results_dir / folder / "gitleaks-version.txt").read_text().strip().lstrip("v")
+        raw = json.loads((results_dir / folder / name).read_text())
+        return {"sast": lambda: raw["version"], "dast": lambda: raw["@version"]}.get(
+            stage, lambda: raw["Trivy"]["Version"])()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def utc_minute(timestamp):
+    # "2026-10-25T12:57:48.463991102Z" -> "25/10/2026 12:57 UTC"
+    try:
+        return datetime.strptime(timestamp[:16], "%Y-%m-%dT%H:%M").strftime("%d/%m/%Y %H:%M UTC")
+    except ValueError:
+        return timestamp
+
+
 ICON = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🔵", "Info": "⚪"}
 
 
@@ -201,8 +241,59 @@ def md(text):
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
+def link(text, url):
+    if not url:
+        return md(text)
+    text = md(text).replace("[", "\\[").replace("]", "\\]")
+    return f"[{text}]({url.replace(' ', '%20').replace('(', '%28').replace(')', '%29')})"
+
+
 def sev(level):
     return f"{ICON[level]} {level}"
+
+
+def repo_url():
+    env = os.environ
+    if not env.get("GITHUB_REPOSITORY"):
+        return None
+    return f"{env.get('GITHUB_SERVER_URL', 'https://github.com')}/{env['GITHUB_REPOSITORY']}"
+
+
+def title_md(f):
+    # Link the advisory ID inside "CVE-... pkg@version", otherwise the whole title.
+    if f.get("url") and f["title"].startswith(f["rule"] + " "):
+        return link(f["rule"], f["url"]) + md(f["title"][len(f["rule"]):])
+    return link(f["title"], f.get("url"))
+
+
+def location_md(f):
+    loc = f["location"]
+    if f["stage"] == "dast":
+        # "5 instance(s), e.g. http://web:4000/learn?url=..." -> path only, cut short
+        count, _, uri = loc.partition(", e.g. ")
+        path = re.sub(r"^https?://[^/]+", "", uri) or "/"
+        return md(f"{count}, e.g. {path if len(path) <= 50 else path[:49] + '…'}")
+    url = f.get("location_url")
+    if not url and f["stage"] == "sast" and repo_url() and os.environ.get("GITHUB_SHA"):
+        path, _, line = loc.rpartition(":")
+        url = f"{repo_url()}/blob/{os.environ['GITHUB_SHA']}/{path}#L{line}"
+    return link(loc, url)
+
+
+def tool_severity(f):
+    if f["stage"] == "dast":  # ZAP riskdesc is "risk (confidence)"
+        m = re.fullmatch(r"(.+) \((.+)\)", f["raw_severity"])
+        if m:
+            return f"{m[1]}, confidence {m[2]}"
+    return f["raw_severity"]
+
+
+def cwe_md(ids):
+    return ", ".join(link(c, CWE_URL.format(c[4:])) if c[4:].isdigit() else md(c) for c in ids)
+
+
+def unique(values):
+    return list(dict.fromkeys(v for v in values if v))
 
 
 def identity(f):
@@ -211,7 +302,7 @@ def identity(f):
     # identified by its rule alone.
     if f["stage"] == "dast":
         return (f["stage"], f["rule"])
-    if f["stage"] in ("sca", "image"):
+    if f["stage"] in DEPENDENCY_STAGES:
         return (f["stage"], f["component"], f["title"])
     return (f["stage"], f["rule"], f["location"])
 
@@ -230,25 +321,76 @@ def changes(findings, previous, not_run):
     }
 
 
-def bar(n, top, width=30):
-    eighths = round(n / top * width * 8) if top else 0
-    full, part = divmod(eighths, 8)
-    return "█" * full + (" ▏▎▍▌▋▊▉"[part] if part else "") or ("▏" if n else "")
+def grouped(rows, key=group_key):
+    """Merge findings with the same key into one row, most severe first."""
+    groups = {}
+    for f in rows:
+        groups.setdefault(key(f), []).append(f)
+    order = list(STAGES)
+    return sorted(groups.values(), key=lambda g: (
+        min(SCALE.index(f["severity"]) for f in g), order.index(g[0]["stage"])))
 
 
-def finding_table(rows, with_stage=False):
-    head = "| Severity | " + ("Stage | " if with_stage else "") + \
-        "Tool severity | Finding | Location | CWE |"
+def finding_table(rows, with_stage=False, with_fixed=False, key=group_key):
+    head = "| Severity | " + ("Stage | " if with_stage else "") + "Tool severity | Finding | " \
+        "Location | " + ("Fixed in | " if with_fixed else "") + "CWE |"
     lines = [head, "|" + "---|" * (head.count("|") - 1)]
-    for f in sorted(rows, key=lambda f: SCALE.index(f["severity"])):
-        stage = f"{STAGES[f['stage']][0]} | " if with_stage else ""
-        lines.append(f"| {sev(f['severity'])} | {stage}{md(f['raw_severity'])} | "
-                     f"{md(f['title'])} | {md(f['location'])} | {', '.join(f['cwe'])} |")
+    for g in grouped(rows, key):
+        level = min((f["severity"] for f in g), key=SCALE.index)
+        locations = unique(f["location"] for f in g)
+        first = next(f for f in g if f["location"] == locations[0])
+        loc = location_md(first) + (f" (+{len(locations) - 1} more)" if len(locations) > 1 else "")
+        cells = [sev(level)]
+        if with_stage:
+            cells.append(", ".join(unique(STAGES[f["stage"]][0] for f in g)))
+        cells += [md(", ".join(unique(tool_severity(f) for f in g))),
+                  ", ".join(unique(title_md(f) for f in g)), loc]
+        if with_fixed:
+            cells.append(md(", ".join(unique(f.get("fixed") for f in g))) or "–")
+        cells.append(cwe_md(unique(c for f in g for c in f["cwe"])))
+        lines.append("| " + " | ".join(cells) + " |")
     return lines
 
 
 def details(summary, body):
     return ["", f"<details><summary>{summary}</summary>", "", *body, "", "</details>"]
+
+
+def fix_count(fs):
+    """Unique advisories (as combine() counts them), and how many have a fixed version."""
+    fixed = {}
+    for f in fs:
+        k = dedup_key(f)
+        fixed[k] = fixed.get(k, False) or bool(f.get("fixed"))
+    return sum(fixed.values()), len(fixed)
+
+
+def provenance(results_dir, not_run):
+    """Tool versions and Trivy DB dates of the stages that ran."""
+    run = [s for s in STAGES if s not in not_run]
+    tools = {s: tool_version(results_dir, s) for s in run}
+    dbs = {s: trivy_db_date(results_dir, STAGES[s][2].split("/")[0])
+           for s in DEPENDENCY_STAGES if s in run}
+    return tools, {s: d for s, d in dbs.items() if d}
+
+
+def run_line(tools, dbs):
+    parts = []
+    sha = os.environ.get("GITHUB_SHA")
+    if sha:
+        url = f"{repo_url()}/commit/{sha}" if repo_url() else None
+        parts.append(f"Commit {link(sha[:7], url)} (NodeGoat vendored in `app/`)")
+    names = {}
+    for s, v in tools.items():
+        names.setdefault(STAGES[s][1].split()[0], v)
+    for name, v in names.items():
+        entry = f"{name} {v}" if v else f"{name} (version not recorded)"
+        if name == "Trivy" and dbs:
+            dates = unique(utc_minute(d) for d in dbs.values())
+            entry += ", DB " + (dates[0] if len(dates) == 1 else ", ".join(
+                f"{STAGES[s][0]} {utc_minute(d)}" for s, d in dbs.items()))
+        parts.append(entry)
+    return " · ".join(parts)
 
 
 def report(results_dir, findings, not_run, passed, previous=None):
@@ -269,6 +411,8 @@ def report(results_dir, findings, not_run, passed, previous=None):
     lines += ["", f"Criteria (DORA Art. 24): the gate fails on any "
               f"{' or '.join(GATE_FAIL_ON)} finding from any stage. Each tool's severity is "
               "mapped onto one scale (Gitleaks has none, so every leaked secret counts as High)."]
+    tools, dbs = provenance(results_dir, not_run)
+    lines += ["", run_line(tools, dbs)]
 
     lines += ["", "## Findings by stage", "",
               "| Stage | Tool | Gate | " + " | ".join(sev(s) for s in SCALE) + " | Total | Notes |",
@@ -290,6 +434,8 @@ def report(results_dir, findings, not_run, passed, previous=None):
             note = f"app {comp['app']}, base-image npm {comp['base']}, OS {comp['os']}"
         elif stage == "dast":
             note = f"alert types; {sum(int(f['location'].split()[0]) for f in fs)} instances"
+        if stage in DEPENDENCY_STAGES and fs:
+            note += f"; fix available for {sum(1 for f in fs if f.get('fixed'))}"
         counts = Counter(f["severity"] for f in fs)
         gate = f"❌ {blocking[stage]}" if blocking[stage] else "✅"
         lines.append(f"| {label} | {tool} | {gate} | "
@@ -301,13 +447,25 @@ def report(results_dir, findings, not_run, passed, previous=None):
                  + f" | **{sum(combined.values())}** | package advisories counted once "
                  "per package version |")
 
-    run = [s for s in STAGES if s not in not_run]
-    top = max([blocking[s] for s in run] or [0])
-    width = max(len(STAGES[s][0]) for s in STAGES)
-    lines += ["", f"**{' + '.join(GATE_FAIL_ON)} by stage**", "```"]
-    lines += [f"{STAGES[s][0]:<{width}}  {bar(blocking[s], top):<31}{blocking[s]:>4}"
-              for s in run]
-    lines += ["```"]
+    if not passed:
+        # Every blocking finding except High dependency advisories, which are
+        # many and fixed the same way (upgrade); those are counted instead.
+        groups = grouped(f for f in findings if f["severity"] in GATE_FAIL_ON)
+        listed = [g for g in groups if any(
+            f["stage"] not in DEPENDENCY_STAGES or f["severity"] == SCALE[0] for f in g)]
+        shown = [f for g in listed for f in g]
+        dep_high = [f for g in groups if g not in listed for f in g]
+        lines += ["", "## What fails the gate", ""]
+        lines += [f"{SCALE[0]} findings from any stage, and {' or '.join(GATE_FAIL_ON[1:])} "
+                  "findings outside the dependency scans. Package advisories reported by both "
+                  "SCA and the image are one row."] if len(GATE_FAIL_ON) > 1 else []
+        if shown:
+            lines += [""] + finding_table(shown, with_stage=True, with_fixed=True)
+        if dep_high:
+            n_fixed, n = fix_count(dep_high)
+            lines += ["", f"Plus {n} {' or '.join(GATE_FAIL_ON[1:])} dependency advisories "
+                      f"(de-duplicated; a fixed version exists for {n_fixed}), listed under "
+                      "Details."]
 
     lines += ["", "## Changes since the previous run"]
     if previous is None:
@@ -333,13 +491,14 @@ def report(results_dir, findings, not_run, passed, previous=None):
                 if any(n) or r:
                     lines.append(f"| {STAGES[s][0]} | {n[0]} | {n[1]} | {r} |")
             if c["new"]:
-                lines += details(f"🆕 New: {len(c['new'])}", finding_table(c["new"], True))
+                lines += details(f"🆕 New: {len(c['new'])}",
+                                 finding_table(c["new"], True, key=identity))
             if c["resolved"]:
                 lines += details(f"✔️ Resolved: {len(c['resolved'])}",
-                                 finding_table(c["resolved"], True))
+                                 finding_table(c["resolved"], True, key=identity))
             if c["rerated"]:
                 rows = ["| Stage | Finding | Before | Now |", "|---|---|---|---|"]
-                rows += [f"| {STAGES[f['stage']][0]} | {md(f['title'])} | "
+                rows += [f"| {STAGES[f['stage']][0]} | {title_md(f)} | "
                          f"{sev(b['severity'])} | {sev(f['severity'])} |"
                          for b, f in c["rerated"]]
                 lines += details(f"↕️ Re-rated: {len(c['rerated'])}", rows)
@@ -347,36 +506,35 @@ def report(results_dir, findings, not_run, passed, previous=None):
             lines += ["", "> [!NOTE]", "> DAST changes can come from the spider reaching "
                       "different pages, not only from changes to the application."]
 
-    if not {"sca", "image"} & set(not_run):
+    if not set(DEPENDENCY_STAGES) & set(not_run):
         o = dependency_overlap(findings)
+        n_fixed, n = fix_count(f for f in findings if f["stage"] in DEPENDENCY_STAGES)
         lines += ["", "## Dependencies", "",
                   "Unique advisory per package version: "
                   f"{o['both']} in both SCA and the image's app packages, "
                   f"{o['sca_only']} only in the lockfile (not installed in the image), "
                   f"{o['image_only']} only in the image's app packages. The image adds "
                   f"{o['image_base']} in the base image's bundled npm and {o['image_os']} "
-                  "OS package findings, which the lockfile can't see."]
-    dates = {a: trivy_db_date(results_dir, a) for s, a in
-             (("sca", "trivy-deps-results"), ("image", "trivy-image-results"))
-             if s not in not_run}
-    if any(dates.values()):
-        lines += ["", "Trivy DB: " + ", ".join(f"{a.split('-')[1]} {d}"
-                                              for a, d in dates.items() if d) + "."]
+                  "OS package findings, which the lockfile can't see.",
+                  "", f"A fixed version exists for {n_fixed} of these {n} advisories."]
 
     lines += ["", "## Details"]
     for stage, (label, tool, _) in STAGES.items():
-        if by_stage[stage]:
-            lines += details(f"{label} ({tool}): {len(by_stage[stage])}",
-                             finding_table(by_stage[stage]))
+        fs = by_stage[stage]
+        if not fs:
+            continue
+        # One row per finding, except SAST: one row per location.
+        key = group_key if stage == "sast" else id
+        count = f"{len(fs)}" + (f" at {len(grouped(fs))} locations" if stage == "sast" else "")
+        lines += details(f"{label} ({tool}): {count}",
+                         finding_table(fs, with_fixed=stage in DEPENDENCY_STAGES, key=key))
     return "\n".join(lines) + "\n"
 
 
 def run_url():
-    env = os.environ
-    if "GITHUB_RUN_ID" not in env:
+    if "GITHUB_RUN_ID" not in os.environ or not repo_url():
         return None
-    return (f"{env.get('GITHUB_SERVER_URL', 'https://github.com')}/"
-            f"{env.get('GITHUB_REPOSITORY')}/actions/runs/{env['GITHUB_RUN_ID']}")
+    return f"{repo_url()}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
 
 
 def main(argv=None):
@@ -403,6 +561,7 @@ def main(argv=None):
 
     blocking = Counter(f["stage"] for f in findings if f["severity"] in GATE_FAIL_ON)
     passed = not blocking
+    tools, dbs = provenance(args.results_dir, args.not_run)
     (args.results_dir / "aggregated-report.md").write_text(
         report(args.results_dir, findings, args.not_run, passed, previous))
     (args.results_dir / "aggregated.json").write_text(json.dumps({
@@ -413,6 +572,8 @@ def main(argv=None):
         "gate": "pass" if passed else "fail",
         "fail_on": list(GATE_FAIL_ON),
         "not_run": args.not_run,
+        "tools": {STAGES[s][1]: v for s, v in tools.items()},
+        "trivy_db": {STAGES[s][0]: d for s, d in dbs.items()},
         "blocking": {STAGES[s][0]: n for s, n in blocking.items()},
         "findings": findings,
     }, indent=2) + "\n")
