@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Combine the five scanners' results into one report and apply the pass/fail gate.
 
-Usage:  aggregate.py RESULTS_DIR [--not-run STAGE ...]
+Usage:  aggregate.py RESULTS_DIR [--not-run STAGE ...] [--report-only]
 
 RESULTS_DIR holds one folder per uploaded artifact, the layout produced by
 actions/download-artifact and by `gh run download <run-id> -D RESULTS_DIR`.
@@ -10,8 +10,10 @@ RESULTS_DIR/aggregated.json (every normalised finding, for mapping to the
 catalogue).
 
 Exit status: 0 = gate passed, 1 = gate failed, 2 = an input is missing or not in
-the expected format. A stage listed with --not-run is reported as not run
-instead of being treated as missing.
+the expected format. With --report-only the verdict is only recorded (in
+aggregated.json and the report) and a failed gate also exits 0, so that a
+separate step can enforce it. A stage listed with --not-run is reported as not
+run instead of being treated as missing.
 """
 
 import argparse
@@ -201,7 +203,7 @@ def count_row(label, tool, counts, extra=""):
 def report(results_dir, findings, not_run, passed):
     by_stage = {s: [f for f in findings if f["stage"] == s] for s in STAGES}
     lines = [
-        f"# Security gate: {'PASSED' if passed else 'FAILED'}",
+        f"# Security report: gate {'PASSED' if passed else 'FAILED'}",
         "",
         f"Criteria (DORA Art. 24): the gate fails on any {' or '.join(GATE_FAIL_ON)} "
         "finding from any stage. Each tool's severity is mapped onto one scale "
@@ -268,6 +270,8 @@ def main(argv=None):
     ap.add_argument("results_dir", type=Path)
     ap.add_argument("--not-run", action="append", default=[], choices=STAGES,
                     help="stage legitimately not run in this pipeline run")
+    ap.add_argument("--report-only", action="store_true",
+                    help="record the verdict but exit 0 when the gate fails")
     args = ap.parse_args(argv)
 
     try:
@@ -285,6 +289,7 @@ def main(argv=None):
         "gate": "pass" if passed else "fail",
         "fail_on": list(GATE_FAIL_ON),
         "not_run": args.not_run,
+        "blocking": {STAGES[s][0]: n for s, n in blocking.items()},
         "findings": findings,
     }, indent=2) + "\n")
 
@@ -293,7 +298,7 @@ def main(argv=None):
         return 0
     print("Gate FAILED: " + ", ".join(
         f"{STAGES[s][0]} {n}" for s, n in blocking.items()) + " Critical/High findings")
-    return 1
+    return 0 if args.report_only else 1
 
 
 if __name__ == "__main__":

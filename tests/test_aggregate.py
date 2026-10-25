@@ -113,8 +113,21 @@ class TestGate(unittest.TestCase):
         result = json.loads((self.tmp / "aggregated.json").read_text())
         self.assertEqual(result["gate"], "fail")
         self.assertEqual(len(result["findings"]), 13)  # raw, not de-duplicated
+        self.assertEqual(result["blocking"], {"SAST": 1, "Secrets": 1, "SCA": 1,
+                                              "Container image": 4})
         report = (self.tmp / "aggregated-report.md").read_text()
-        self.assertIn("# Security gate: FAILED", report)
+        self.assertIn("# Security report: gate FAILED", report)
+
+    def test_report_only_records_failure_but_exits_0(self):
+        rc, _ = self.run_main("--report-only")
+        self.assertEqual(rc, 0)
+        result = json.loads((self.tmp / "aggregated.json").read_text())
+        self.assertEqual(result["gate"], "fail")
+
+    def test_report_only_still_fails_on_input_error(self):
+        (self.tmp / "gitleaks-results" / "gitleaks.json").unlink()
+        rc, _ = self.run_main("--report-only")
+        self.assertEqual(rc, 2)
 
     def test_passes_without_critical_or_high(self):
         # ZAP fixture alone has only Medium and Info.
@@ -122,7 +135,7 @@ class TestGate(unittest.TestCase):
                               "--not-run", "sca", "--not-run", "image")
         self.assertEqual(rc, 0)
         report = (self.tmp / "aggregated-report.md").read_text()
-        self.assertIn("# Security gate: PASSED", report)
+        self.assertIn("# Security report: gate PASSED", report)
         self.assertIn("**Partial result.**", report)
 
     def test_missing_input_is_an_error(self):

@@ -7,7 +7,8 @@
 # Security scans run alongside the build on GitHub-hosted runners. Each scanner
 # only records its findings and uploads them as an artifact; it never fails the
 # run because of what it found. A job fails only if the tool itself errors.
-# The aggregate job alone applies the pass/fail gate to all of them.
+# The report job combines their results and the gate job alone enforces the
+# pass/fail criteria.
 
 name: build-deploy-dev
 
@@ -289,15 +290,20 @@ jobs:
           name: zap-results
           path: ${{ runner.temp }}/zap/
 
-  aggregate:
-    name: Aggregate + gate
+  report:
+    name: Report (aggregate)
     needs: [sast, secrets, sca, image-scan, dast]
     # Runs even when a scan job failed or was skipped. A failed scan uploads
-    # nothing, and a missing result fails the gate as an input error.
+    # nothing, and a missing result fails this job as an input error.
+    # Fails only if reporting itself fails; the verdict goes to the gate job.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    outputs:
+      verdict: ${{ steps.aggregate.outputs.verdict }}
+      blocking: ${{ steps.aggregate.outputs.blocking }}
+      fail_on: ${{ steps.aggregate.outputs.fail_on }}
     steps:
       - uses: actions/checkout@v7
 
@@ -310,10 +316,10 @@ jobs:
           pattern: "*-results"
           path: results
 
-      - name: Aggregate and apply gate
-        # Exit 1 = gate failed (any Critical/High), 2 = a result is missing or
-        # unreadable. The image scan and DAST run only for main, so elsewhere
-        # they are reported as not run instead of missing.
+      - name: Aggregate
+        id: aggregate
+        # Exit 2 = a result is missing or unreadable. The image scan and DAST
+        # run only for main, so elsewhere they are reported as not run.
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
@@ -321,7 +327,14 @@ jobs:
           not_run=()
           [[ $EVENT == pull_request ]] && not_run+=(--not-run image)
           [[ $EVENT == pull_request || $REF != refs/heads/main ]] && not_run+=(--not-run dast)
-          python3 scripts/aggregate.py results "${not_run[@]}"
+          python3 scripts/aggregate.py results --report-only "${not_run[@]}"
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import json
+          r = json.load(open("results/aggregated.json"))
+          print(f"verdict={r['gate']}")
+          print(f"blocking={json.dumps(r['blocking'])}")
+          print(f"fail_on={'/'.join(r['fail_on'])}")
+          PY
 
       - name: Job summary
         if: always()
@@ -338,3 +351,27 @@ jobs:
             results/aggregated-report.md
             results/aggregated.json
           if-no-files-found: ignore
+
+  gate:
+    name: Security gate
+    needs: report
+    # Enforces the verdict the report job computed (criteria: aggregate.py).
+    # Runs after a failed report too, so the gate never shows as skipped
+    # when no verdict exists.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Enforce verdict
+        env:
+          VERDICT: ${{ needs.report.outputs.verdict }}
+          BLOCKING: ${{ needs.report.outputs.blocking }}
+          FAIL_ON: ${{ needs.report.outputs.fail_on }}
+        run: |
+          case $VERDICT in
+            pass) echo "Gate passed: no $FAIL_ON findings" ;;
+            fail) echo "::error::Gate failed: $FAIL_ON findings by stage: $BLOCKING"
+                  exit 1 ;;
+            *)    echo "::error::No verdict: the report job did not complete"
+                  exit 1 ;;
+          esac
