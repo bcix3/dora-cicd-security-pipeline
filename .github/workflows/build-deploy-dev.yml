@@ -13,6 +13,11 @@
 # unless the repository variable STATIC_RUNNER is "lab", which moves them to the
 # self-hosted lab runner. Pull requests always use GitHub-hosted runners, so
 # code that hasn't been merged never runs on the lab VM.
+#
+# Hardening: triggers are push/pull_request only (never pull_request_target, which
+# would run fork code with repository secrets). The token defaults to contents:
+# read and each job asks only for what it needs. Every action is pinned to a
+# full commit SHA, checkouts don't keep the token, and every job has a timeout.
 
 name: build-deploy-dev
 
@@ -25,7 +30,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   # Shared by both Trivy jobs. The binary is checked against this hash.
@@ -36,6 +40,7 @@ jobs:
   sast:
     name: SAST (Semgrep)
     runs-on: ${{ vars.STATIC_RUNNER == 'lab' && github.event_name != 'pull_request' && fromJSON('["self-hosted", "lab"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 15
     permissions:
       contents: read
     env:
@@ -43,7 +48,9 @@ jobs:
       SEMGREP_IMAGE: semgrep/semgrep:1.180.0@sha256:529ee8a277ec8adc5b534d7c74eea0a47e9de21d62852b6ba7ac6ba9566845c3
       SEMGREP_RULESETS: "owasp-top-ten javascript nodejsscan"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Snapshot rulesets
         # Registry rulesets are not versioned, so the exact rules used are
@@ -65,7 +72,7 @@ jobs:
               $(printf -- '--config results/semgrep-rules/%s.yaml ' $SEMGREP_RULESETS) \
               --json --output results/semgrep.json app
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: semgrep-results
           path: results/
@@ -73,14 +80,16 @@ jobs:
   secrets:
     name: Secrets (Gitleaks)
     runs-on: ${{ vars.STATIC_RUNNER == 'lab' && github.event_name != 'pull_request' && fromJSON('["self-hosted", "lab"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 10
     permissions:
       contents: read
     env:
       GITLEAKS_VERSION: "8.30.1"
       GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           # Full history: a secret deleted in a later commit has still leaked.
           fetch-depth: 0
 
@@ -103,7 +112,7 @@ jobs:
           # The report doesn't say which version produced it.
           gitleaks version > results/gitleaks-version.txt
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: gitleaks-results
           path: results/
@@ -111,10 +120,13 @@ jobs:
   sca:
     name: SCA (Trivy)
     runs-on: ${{ vars.STATIC_RUNNER == 'lab' && github.event_name != 'pull_request' && fromJSON('["self-hosted", "lab"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Trivy
         working-directory: ${{ runner.temp }}
@@ -139,34 +151,40 @@ jobs:
           # record which one this scan used.
           trivy version --format json > results/trivy-db.json
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: trivy-deps-results
           path: results/
 
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write  # the only job that pushes to GHCR
     outputs:
       image: ${{ steps.name.outputs.image }}
       digest: ${{ steps.push.outputs.digest }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Image name
         id: name
         # GHCR requires lowercase repository names.
         run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
 
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
         if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         id: push
         with:
           context: app
@@ -181,6 +199,7 @@ jobs:
     # Scans the image as pushed to GHCR; on pull requests nothing is pushed.
     if: github.event_name != 'pull_request'
     runs-on: ${{ vars.STATIC_RUNNER == 'lab' && github.event_name != 'pull_request' && fromJSON('["self-hosted", "lab"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 10
     permissions:
       contents: read
       packages: read
@@ -209,7 +228,7 @@ jobs:
             --format json --output results/trivy-image.json "${IMAGE%:*}@${DIGEST}"
           trivy version --format json > results/trivy-db.json
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: trivy-image-results
           path: results/
@@ -218,6 +237,7 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, lab]
+    timeout-minutes: 10
     environment: dev
     concurrency:
       group: deploy-dev
@@ -226,9 +246,11 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -274,8 +296,6 @@ jobs:
             echo "::error::a NodeGoat port is published beyond 127.0.0.1"
             exit 1
           fi
-          echo "Listening TCP sockets on the lab VM:"
-          ss -tln
 
       - name: ZAP baseline scan
         # ZAP joins the dev tier's own Docker network and scans the app container
@@ -297,7 +317,7 @@ jobs:
           echo "zap-baseline exit code: $rc"
           [[ $rc -le 2 ]] || exit "$rc"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: zap-results
           path: ${{ runner.temp }}/zap/
@@ -310,6 +330,7 @@ jobs:
     # Fails only if reporting itself fails; the verdict goes to the gate job.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read  # previous run's aggregate-results
@@ -318,12 +339,14 @@ jobs:
       blocking: ${{ steps.aggregate.outputs.blocking }}
       fail_on: ${{ steps.aggregate.outputs.fail_on }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Test aggregate.py
         run: python3 -m unittest discover -s tests
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           # One folder per artifact; excludes the build cache artifact.
           pattern: "*-results"
@@ -375,7 +398,7 @@ jobs:
             cat results/aggregated-report.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         if: always()
         with:
           name: aggregate-results
@@ -392,6 +415,7 @@ jobs:
     # when no verdict exists.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions: {}
     steps:
       - name: Enforce verdict
