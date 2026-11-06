@@ -372,7 +372,6 @@ jobs:
 
   report:
     name: Report (aggregate)
-    # CodeQL's results are downloaded but not yet part of the report or gate.
     needs: [sast, codeql, secrets, sca, image-scan, dast]
     # Runs even when a scan job failed or was skipped. A failed scan uploads
     # nothing, and a missing result fails this job as an input error.

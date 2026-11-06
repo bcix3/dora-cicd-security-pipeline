@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Combine the five scanners' results into one report and apply the pass/fail gate.
+"""Combine the scanners' results into one report and apply the pass/fail gate.
 
 Usage:  aggregate.py RESULTS_DIR [--not-run STAGE ...] [--report-only]
                       [--previous AGGREGATED_JSON]
@@ -40,6 +40,8 @@ TRIVY_SEVERITY = {"CRITICAL": "Critical", "HIGH": "High", "MEDIUM": "Medium",
                   "LOW": "Low", "UNKNOWN": "High"}  # unrated: fail safe
 ZAP_SEVERITY = {"3": "High", "2": "Medium", "1": "Low", "0": "Info"}
 GITLEAKS_SEVERITY = "High"  # Gitleaks has no severity; any leaked secret is High
+# CodeQL rates security queries 0-10 ("security-severity"); thresholds as GitHub uses them.
+CODEQL_SEVERITY = [(9.0, "Critical"), (7.0, "High"), (4.0, "Medium"), (0.1, "Low"), (0.0, "Info")]
 
 # Rules loaded from local files get the folder path as a check_id prefix.
 SEMGREP_RULES_PREFIX = "results.semgrep-rules."
@@ -48,12 +50,18 @@ NODEJSSCAN_MARKER = "ajinabraham.njsscan"
 # WORKDIR of NodeGoat in the image (app/Dockerfile).
 IMAGE_APP_ROOT = "home/node/app/"
 
+# CodeQL's paths are relative to its --source-root.
+CODEQL_SOURCE_ROOT = "app/"
+CODEQL_HELP_URL = "https://codeql.github.com/codeql-query-help/javascript/{}/"
+
+SAST_STAGES = ("sast", "codeql")
 DEPENDENCY_STAGES = ("sca", "image")
 ZAP_ALERT_URL = "https://www.zaproxy.org/docs/alerts/{}/"
 CWE_URL = "https://cwe.mitre.org/data/definitions/{}.html"
 
 STAGES = {
-    "sast": ("SAST", "Semgrep", "semgrep-results/semgrep.json"),
+    "sast": ("SAST (Semgrep)", "Semgrep", "semgrep-results/semgrep.json"),
+    "codeql": ("SAST (CodeQL)", "CodeQL", "codeql-results/codeql.sarif"),
     "secrets": ("Secrets", "Gitleaks", "gitleaks-results/gitleaks.json"),
     "sca": ("SCA", "Trivy fs", "trivy-deps-results/trivy-deps.json"),
     "image": ("Container image", "Trivy image", "trivy-image-results/trivy-image.json"),
@@ -70,6 +78,16 @@ def mapped(table, value, tool):
         return table[value]
     except KeyError:
         raise InputError(f"{tool}: unknown severity {value!r}") from None
+
+
+def codeql_severity(score):
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        raise InputError(f"codeql: unknown security-severity {score!r}") from None
+    if not 0 <= value <= 10:
+        raise InputError(f"codeql: unknown security-severity {score!r}")
+    return next(level for floor, level in CODEQL_SEVERITY if value >= floor)
 
 
 def cwe_ids(values):
@@ -93,6 +111,29 @@ def parse_semgrep(raw):
             "ruleset": "nodejsscan" if NODEJSSCAN_MARKER in rule else "standard",
             "url": r["extra"]["metadata"].get("source"),
         }
+
+
+def parse_codeql(raw):
+    # SARIF: each result names its rule; the rule holds the score and CWE tags.
+    for run in raw["runs"]:
+        rules = {r["id"]: r for r in run["tool"]["driver"]["rules"]}
+        for r in run["results"]:
+            rule = rules[r["ruleId"]]
+            props = rule["properties"]
+            where = r["locations"][0]["physicalLocation"]
+            score = props.get("security-severity")
+            yield {
+                "rule": r["ruleId"],
+                "title": rule["shortDescription"]["text"],
+                "location": f"{CODEQL_SOURCE_ROOT}{where['artifactLocation']['uri']}:"
+                            f"{where['region']['startLine']}",
+                "raw_severity": f"{score} ({props.get('problem.severity', '-')})",
+                "severity": codeql_severity(score),
+                # "external/cwe/cwe-094" -> "CWE-94"
+                "cwe": [f"CWE-{int(t.rsplit('-', 1)[1])}" for t in props.get("tags", [])
+                        if t.startswith("external/cwe/cwe-")],
+                "url": CODEQL_HELP_URL.format(r["ruleId"].replace("/", "-")),
+            }
 
 
 def parse_gitleaks(raw):
@@ -150,8 +191,8 @@ def parse_zap(raw):
             }
 
 
-PARSERS = {"sast": parse_semgrep, "secrets": parse_gitleaks, "sca": parse_trivy,
-           "image": parse_trivy, "dast": parse_zap}
+PARSERS = {"sast": parse_semgrep, "codeql": parse_codeql, "secrets": parse_gitleaks,
+           "sca": parse_trivy, "image": parse_trivy, "dast": parse_zap}
 
 
 def load(results_dir, stage):
@@ -164,7 +205,7 @@ def load(results_dir, stage):
         raise InputError(f"{stage}: {path} is not valid JSON ({e})") from None
     try:
         return [dict(f, stage=stage) for f in PARSERS[stage](raw)]
-    except (KeyError, TypeError) as e:
+    except (KeyError, TypeError, IndexError, ValueError) as e:
         raise InputError(f"{stage}: unexpected format in {path} ({e!r})") from None
 
 
@@ -181,8 +222,8 @@ def dedup_key(f):
 def group_key(f):
     # For listing: Semgrep often reports one line under two rules (e.g.
     # eval_nodejs and code-string-concat), which is one row to read.
-    if f["stage"] == "sast":
-        return ("sast", f["location"])
+    if f["stage"] in SAST_STAGES:
+        return (f["stage"], f["location"])
     return dedup_key(f)
 
 
@@ -205,6 +246,16 @@ def dependency_overlap(findings):
             "image_base": len(keys("image", "base")), "image_os": len(keys("image", "os"))}
 
 
+def sast_overlap(findings):
+    """Locations (file:line) per SAST tool. Matched on the exact line only: the
+    tools label the same flaw with different rules and CWEs."""
+    at = {s: {} for s in SAST_STAGES}
+    for f in findings:
+        if f["stage"] in SAST_STAGES:
+            at[f["stage"]].setdefault(f["location"], []).append(f)
+    return at
+
+
 def trivy_db_date(results_dir, artifact):
     try:
         info = json.loads((results_dir / artifact / "trivy-db.json").read_text())
@@ -220,7 +271,8 @@ def tool_version(results_dir, stage):
         if stage == "secrets":  # the report has none; the job saves `gitleaks version`
             return (results_dir / folder / "gitleaks-version.txt").read_text().strip().lstrip("v")
         raw = json.loads((results_dir / folder / name).read_text())
-        return {"sast": lambda: raw["version"], "dast": lambda: raw["@version"]}.get(
+        return {"sast": lambda: raw["version"], "dast": lambda: raw["@version"],
+                "codeql": lambda: raw["runs"][0]["tool"]["driver"]["semanticVersion"]}.get(
             stage, lambda: raw["Trivy"]["Version"])()
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -274,7 +326,7 @@ def location_md(f):
         path = re.sub(r"^https?://[^/]+", "", uri) or "/"
         return md(f"{count}, e.g. {path if len(path) <= 50 else path[:49] + '…'}")
     url = f.get("location_url")
-    if not url and f["stage"] == "sast" and repo_url() and os.environ.get("GITHUB_SHA"):
+    if not url and f["stage"] in SAST_STAGES and repo_url() and os.environ.get("GITHUB_SHA"):
         path, _, line = loc.rpartition(":")
         url = f"{repo_url()}/blob/{os.environ['GITHUB_SHA']}/{path}#L{line}"
     return link(loc, url)
@@ -307,9 +359,16 @@ def identity(f):
     return (f["stage"], f["rule"], f["location"])
 
 
+def stages_run(previous):
+    if "stages" in previous:
+        return previous["stages"]
+    # Older aggregated.json didn't list its stages; CodeQL wasn't one of them.
+    return [s for s in STAGES if s != "codeql" and s not in previous["not_run"]]
+
+
 def changes(findings, previous, not_run):
     """Compare with a previous run's aggregated.json, for stages run in both."""
-    compared = [s for s in STAGES if s not in not_run and s not in previous["not_run"]]
+    compared = [s for s in STAGES if s not in not_run and s in stages_run(previous)]
     now = {identity(f): f for f in findings if f["stage"] in compared}
     before = {identity(f): f for f in previous["findings"] if f["stage"] in compared}
     return {
@@ -423,10 +482,11 @@ def report(results_dir, findings, not_run, passed, previous=None):
             continue
         fs = by_stage[stage]
         note = ""
+        if stage in SAST_STAGES:
+            note = f"{len({f['location'] for f in fs})} locations"
         if stage == "sast":
             rs = Counter(f["ruleset"] for f in fs)
-            note = (f"{len({f['location'] for f in fs})} locations; "
-                    f"standard {rs['standard']}, nodejsscan {rs['nodejsscan']}")
+            note += f"; standard {rs['standard']}, nodejsscan {rs['nodejsscan']}"
         elif stage == "sca":
             note = f"{len({f['package'] for f in fs})} package versions"
         elif stage == "image":
@@ -445,7 +505,7 @@ def report(results_dir, findings, not_run, passed, previous=None):
     lines.append("| **Combined** | de-duplicated | | "
                  + " | ".join(str(combined[s]) for s in SCALE)
                  + f" | **{sum(combined.values())}** | package advisories counted once "
-                 "per package version |")
+                 "per package version; SAST per tool |")
 
     if not passed:
         # Every blocking finding except High dependency advisories, which are
@@ -518,15 +578,43 @@ def report(results_dir, findings, not_run, passed, previous=None):
                   "OS package findings, which the lockfile can't see.",
                   "", f"A fixed version exists for {n_fixed} of these {n} advisories."]
 
+    if not set(SAST_STAGES) & set(not_run):
+        at = sast_overlap(findings)
+        semgrep, codeql = (set(at[s]) for s in SAST_STAGES)
+        lines += ["", "## SAST tools compared", "",
+                  f"Locations (file:line): {len(semgrep & codeql)} reported by both Semgrep "
+                  f"and CodeQL, {len(semgrep - codeql)} by Semgrep only, "
+                  f"{len(codeql - semgrep)} by CodeQL only. Matched on the exact line, "
+                  "because the tools name the same flaw with different rules and CWEs."]
+
+        def cell(fs):
+            if not fs:
+                return "–"
+            level = min((f["severity"] for f in fs), key=SCALE.index)
+            return f"{ICON[level]} " + ", ".join(unique(title_md(f) for f in fs))
+
+        def by_line(loc):
+            path, _, line = loc.rpartition(":")
+            return path, int(line)
+
+        rows = ["| Location | Semgrep | CodeQL |", "|---|---|---|"]
+        for loc in sorted(semgrep | codeql, key=by_line):
+            fs = at["sast"].get(loc) or at["codeql"][loc]
+            rows.append(f"| {location_md(fs[0])} | {cell(at['sast'].get(loc))} | "
+                        f"{cell(at['codeql'].get(loc))} |")
+        lines += details(f"All {len(semgrep | codeql)} locations", rows)
+
     lines += ["", "## Details"]
     for stage, (label, tool, _) in STAGES.items():
         fs = by_stage[stage]
         if not fs:
             continue
         # One row per finding, except SAST: one row per location.
-        key = group_key if stage == "sast" else id
-        count = f"{len(fs)}" + (f" at {len(grouped(fs))} locations" if stage == "sast" else "")
-        lines += details(f"{label} ({tool}): {count}",
+        sast = stage in SAST_STAGES
+        key = group_key if sast else id
+        count = f"{len(fs)}" + (f" at {len(grouped(fs))} locations" if sast else "")
+        name = label if tool in label else f"{label} ({tool})"
+        lines += details(f"{name}: {count}",
                          finding_table(fs, with_fixed=stage in DEPENDENCY_STAGES, key=key))
     return "\n".join(lines) + "\n"
 
@@ -572,6 +660,7 @@ def main(argv=None):
         "gate": "pass" if passed else "fail",
         "fail_on": list(GATE_FAIL_ON),
         "not_run": args.not_run,
+        "stages": [s for s in STAGES if s not in args.not_run],
         "tools": {STAGES[s][1]: v for s, v in tools.items()},
         "trivy_db": {STAGES[s][0]: d for s, d in dbs.items()},
         "blocking": {STAGES[s][0]: n for s, n in blocking.items()},

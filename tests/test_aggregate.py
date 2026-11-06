@@ -1,7 +1,8 @@
 """Tests for scripts/aggregate.py.
 
 Fixtures in tests/fixtures/ are cut from the real output of reference run
-38636367530 (14/10/26), in the artifact layout the aggregate job downloads.
+38636367530 (14/10/26), and CodeQL's from run 42214331885 (06/11/26), in the
+artifact layout the aggregate job downloads.
 Run with:  python3 -m unittest discover -s tests
 """
 
@@ -50,6 +51,25 @@ class TestParsers(unittest.TestCase):
         f = by_title(aggregate.load(FIXTURES, "sast"))["cookie_session_default"]
         self.assertEqual((f["raw_severity"], f["severity"]), ("INFO", "Low"))
 
+    def test_codeql(self):
+        f = by_title(aggregate.load(FIXTURES, "codeql"))["Code injection"]
+        self.assertEqual(f["rule"], "js/code-injection")
+        self.assertEqual(f["location"], "app/app/routes/contributions.js:32")  # under app/
+        self.assertEqual((f["raw_severity"], f["severity"]), ("9.3 (error)", "Critical"))
+        self.assertEqual(f["cwe"], ["CWE-94", "CWE-95", "CWE-79", "CWE-116"])  # cwe-094
+        self.assertEqual(f["url"], "https://codeql.github.com/codeql-query-help/"
+                                   "javascript/js-code-injection/")
+
+    def test_codeql_score_without_decimal(self):
+        f = by_title(aggregate.load(FIXTURES, "codeql"))["Failure to abandon session"]
+        self.assertEqual((f["raw_severity"], f["severity"]), ("5 (warning)", "Medium"))
+
+    def test_codeql_thresholds(self):
+        self.assertEqual([aggregate.codeql_severity(v) for v in
+                          ("10", "9.0", "8.9", "7.0", "6.9", "4.0", "3.9", "0.1", "0")],
+                         ["Critical", "Critical", "High", "High", "Medium", "Medium",
+                          "Low", "Low", "Info"])
+
     def test_gitleaks(self):
         [f] = aggregate.load(FIXTURES, "secrets")
         self.assertEqual(f["rule"], "private-key")
@@ -91,11 +111,12 @@ class TestDedup(unittest.TestCase):
                          for f in aggregate.load(FIXTURES, s)]
 
     def test_combined_counts(self):
-        # 3 SAST + 1 secret + 2 app advisories (kind-of in SCA and twice in the
-        # image counts once) + 1 base-image + 2 OS (one CVE, two packages) + 2 ZAP
+        # 3 Semgrep + 3 CodeQL + 1 secret + 2 app advisories (kind-of in SCA and
+        # twice in the image counts once) + 1 base-image + 2 OS (one CVE, two
+        # packages) + 2 ZAP
         combined = aggregate.combine(self.findings)
-        self.assertEqual(sum(combined.values()), 11)
-        self.assertEqual(combined["High"], 5)
+        self.assertEqual(sum(combined.values()), 14)
+        self.assertEqual((combined["Critical"], combined["High"]), (1, 6))
 
     def test_overlap(self):
         self.assertEqual(aggregate.dependency_overlap(self.findings), {
@@ -141,6 +162,13 @@ class TestChanges(unittest.TestCase):
         c = aggregate.changes(self.findings, prev, [])
         self.assertEqual(sorted(f["stage"] for f in c["new"]), ["image", "sca"])
 
+    def test_previous_run_without_codeql(self):
+        # aggregated.json from before CodeQL has no "stages" list.
+        prev = self.previous([f for f in self.findings if f["stage"] != "codeql"])
+        c = aggregate.changes(self.findings, prev, [])
+        self.assertNotIn("codeql", c["compared"])
+        self.assertEqual(c["new"], [])
+
     def test_stage_not_run_in_either_run_is_not_compared(self):
         prev = self.previous([f for f in self.findings if f["stage"] != "dast"],
                              not_run=["dast"])
@@ -169,10 +197,12 @@ class TestReport(unittest.TestCase):
 
     def test_run_line(self):
         self.assertIn("Commit [abcdef1](https://github.com/o/r/commit/abcdef1234567) "
-                      "(NodeGoat vendored in `app/`) · Semgrep 1.180.0 · Gitleaks 8.30.1 · "
-                      "Trivy 0.75.0, DB 14/10/2026 19:14 UTC · ZAP 2.17.0", self.render())
+                      "(NodeGoat vendored in `app/`) · Semgrep 1.180.0 · CodeQL 2.27.3 · "
+                      "Gitleaks 8.30.1 · Trivy 0.75.0, DB 14/10/2026 19:14 UTC · ZAP 2.17.0",
+                      self.render())
         result = json.loads((self.tmp / "aggregated.json").read_text())
         self.assertEqual(result["tools"]["Gitleaks"], "8.30.1")
+        self.assertEqual(result["stages"], list(aggregate.STAGES))
         self.assertEqual(result["trivy_db"], {"SCA": "2026-10-14T19:14:58.511503573Z"})
 
     def test_missing_version_is_not_an_error(self):
@@ -182,8 +212,9 @@ class TestReport(unittest.TestCase):
     def test_what_fails_the_gate(self):
         gate = self.section(self.render(), "What fails the gate")
         # SAST and secrets High are listed with links; dependency High is counted.
-        self.assertIn("| 🟠 High | SAST | ERROR | [code-string-concat](https://semgrep.dev/r/"
-                      "javascript.lang.security.audit.code-string-concat.code-string-concat) | "
+        self.assertIn("| 🟠 High | SAST (Semgrep) | ERROR | [code-string-concat]("
+                      "https://semgrep.dev/r/javascript.lang.security.audit.code-string-concat."
+                      "code-string-concat) | "
                       "[app/app/routes/contributions.js:32](https://github.com/o/r/blob/"
                       "abcdef1234567/app/app/routes/contributions.js#L32) | – | "
                       "[CWE-95](https://cwe.mitre.org/data/definitions/95.html) |", gate)
@@ -214,10 +245,21 @@ class TestReport(unittest.TestCase):
         path.write_text(json.dumps(raw))
         report = self.render()
         self.assertIn("SAST (Semgrep): 4 at 3 locations", report)
-        sast = report.split("SAST (Semgrep)", 1)[1].split("</details>", 1)[0]
+        sast = report.split("SAST (Semgrep): 4", 1)[1].split("</details>", 1)[0]
         self.assertEqual(sast.count("contributions.js:32]"), 1)
         self.assertIn("[code-string-concat](", sast)
         self.assertIn(", [eval_nodejs](https://semgrep.dev/r/eval_nodejs) |", sast)
+
+    def test_sast_tools_compared(self):
+        sast = self.section(self.render(), "SAST tools compared")
+        self.assertIn("1 reported by both Semgrep and CodeQL, 2 by Semgrep only, "
+                      "2 by CodeQL only.", sast)
+        [row] = [r for r in sast.splitlines() if r.startswith("| [app/app/routes/contrib")]
+        self.assertIn("| 🟠 [code-string-concat](", row)
+        self.assertIn("| 🔴 [Code injection](", row)
+        rows = [r for r in sast.splitlines() if r.startswith("| [")]
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(rows[-1].startswith("| [app/server.js:78]"))  # sorted by path, line
 
     def test_zap_readability(self):
         dast = self.render().split("DAST (ZAP baseline)", 1)[1]
@@ -255,11 +297,11 @@ class TestGate(unittest.TestCase):
         self.assertEqual(rc, 1)
         result = json.loads((self.tmp / "aggregated.json").read_text())
         self.assertEqual(result["gate"], "fail")
-        self.assertEqual(len(result["findings"]), 13)  # raw, not de-duplicated
-        self.assertEqual(result["blocking"], {"SAST": 1, "Secrets": 1, "SCA": 1,
-                                              "Container image": 4})
+        self.assertEqual(len(result["findings"]), 16)  # raw, not de-duplicated
+        self.assertEqual(result["blocking"], {"SAST (Semgrep)": 1, "SAST (CodeQL)": 2,
+                                              "Secrets": 1, "SCA": 1, "Container image": 4})
         report = (self.tmp / "aggregated-report.md").read_text()
-        self.assertIn("**Gate FAILED.** Critical or High findings in 4 of 5 stages run", report)
+        self.assertIn("**Gate FAILED.** Critical or High findings in 5 of 6 stages run", report)
 
     def test_report_only_records_failure_but_exits_0(self):
         rc, _ = self.run_main("--report-only")
@@ -274,7 +316,7 @@ class TestGate(unittest.TestCase):
 
     def test_passes_without_critical_or_high(self):
         # ZAP fixture alone has only Medium and Info.
-        rc, _ = self.run_main("--not-run", "sast", "--not-run", "secrets",
+        rc, _ = self.run_main("--not-run", "sast", "--not-run", "codeql", "--not-run", "secrets",
                               "--not-run", "sca", "--not-run", "image")
         self.assertEqual(rc, 0)
         report = (self.tmp / "aggregated-report.md").read_text()
@@ -322,6 +364,34 @@ class TestGate(unittest.TestCase):
         rc, err = self.run_main()
         self.assertEqual(rc, 2)
         self.assertIn("unknown severity 'CRITICAL'", err)
+
+    def test_codeql_score_missing_or_out_of_range_is_an_error(self):
+        path = self.tmp / "codeql-results" / "codeql.sarif"
+        original = path.read_text()
+        for score, expected in ((None, "None"), ("11", "'11'"), ("high", "'high'")):
+            raw = json.loads(original)
+            props = raw["runs"][0]["tool"]["driver"]["rules"][0]["properties"]
+            if score is None:
+                del props["security-severity"]
+            else:
+                props["security-severity"] = score
+            path.write_text(json.dumps(raw))
+            rc, err = self.run_main()
+            self.assertEqual(rc, 2)
+            self.assertIn(f"codeql: unknown security-severity {expected}", err)
+
+    def test_previous_run_without_codeql_is_not_compared(self):
+        self.run_main()
+        previous = self.tmp / "previous.json"
+        (self.tmp / "aggregated.json").rename(previous)
+        raw = json.loads(previous.read_text())
+        del raw["stages"]
+        raw["findings"] = [f for f in raw["findings"] if f["stage"] != "codeql"]
+        previous.write_text(json.dumps(raw))
+        self.run_main("--previous", str(previous))
+        report = (self.tmp / "aggregated-report.md").read_text()
+        self.assertIn("Not compared (not run in one of the two runs): SAST (CodeQL).", report)
+        self.assertIn("No new, resolved or re-rated findings.", report)
 
     def test_changed_schema_is_an_error(self):
         path = self.tmp / "zap-results" / "zap-report.json"

@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "organization": "GitHub",
+          "semanticVersion": "2.27.3",
+          "rules": [
+            {
+              "id": "js/sql-injection",
+              "name": "js/sql-injection",
+              "shortDescription": {
+                "text": "Database query built from user-controlled sources"
+              },
+              "defaultConfiguration": {
+                "enabled": true,
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-089",
+                  "external/cwe/cwe-090",
+                  "external/cwe/cwe-943"
+                ],
+                "description": "Building a database query from user-controlled sources is vulnerable to insertion of\n              malicious code by the user.",
+                "id": "js/sql-injection",
+                "kind": "path-problem",
+                "name": "Database query built from user-controlled sources",
+                "precision": "high",
+                "problem.severity": "error",
+                "security-severity": "8.8"
+              }
+            },
+            {
+              "id": "js/code-injection",
+              "name": "js/code-injection",
+              "shortDescription": {
+                "text": "Code injection"
+              },
+              "defaultConfiguration": {
+                "enabled": true,
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-094",
+                  "external/cwe/cwe-095",
+                  "external/cwe/cwe-079",
+                  "external/cwe/cwe-116"
+                ],
+                "description": "Interpreting unsanitized user input as code allows a malicious user arbitrary\n              code execution.",
+                "id": "js/code-injection",
+                "kind": "path-problem",
+                "name": "Code injection",
+                "precision": "high",
+                "problem.severity": "error",
+                "security-severity": "9.3"
+              }
+            },
+            {
+              "id": "js/session-fixation",
+              "name": "js/session-fixation",
+              "shortDescription": {
+                "text": "Failure to abandon session"
+              },
+              "defaultConfiguration": {
+                "enabled": true,
+                "level": "warning"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "external/cwe/cwe-384"
+                ],
+                "description": "Reusing an existing session as a different user could allow\n              an attacker to access someone else's account by using\n              their session.",
+                "id": "js/session-fixation",
+                "kind": "problem",
+                "name": "Failure to abandon session",
+                "precision": "medium",
+                "problem.severity": "warning",
+                "security-severity": "5"
+              }
+            }
+          ]
+        },
+        "extensions": [
+          {
+            "name": "codeql/javascript-queries",
+            "semanticVersion": "2.4.8+a1575b98a8cc19bcfa7bb6cb41be688cb3dae65c",
+            "locations": [
+              {
+                "uri": "file:///opt/actions-runner/_work/_temp/codeql/qlpacks/codeql/javascript-queries/2.4.8/",
+                "description": {
+                  "text": "The QL pack root directory."
+                },
+                "properties": {
+                  "tags": [
+                    "CodeQL/LocalPackRoot"
+                  ]
+                }
+              },
+              {
+                "uri": "file:///opt/actions-runner/_work/_temp/codeql/qlpacks/codeql/javascript-queries/2.4.8/qlpack.yml",
+                "description": {
+                  "text": "The QL pack definition file."
+                },
+                "properties": {
+                  "tags": [
+                    "CodeQL/LocalPackDefinitionFile"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "codeql/javascript-all",
+            "semanticVersion": "2.10.4+a1575b98a8cc19bcfa7bb6cb41be688cb3dae65c",
+            "locations": [
+              {
+                "uri": "file:///opt/actions-runner/_work/_temp/codeql/qlpacks/codeql/javascript-queries/2.4.8/.codeql/libraries/codeql/javascript-all/2.10.4/",
+                "description": {
+                  "text": "The QL pack root directory."
+                },
+                "properties": {
+                  "tags": [
+                    "CodeQL/LocalPackRoot"
+                  ]
+                }
+              },
+              {
+                "uri": "file:///opt/actions-runner/_work/_temp/codeql/qlpacks/codeql/javascript-queries/2.4.8/.codeql/libraries/codeql/javascript-all/2.10.4/qlpack.yml",
+                "description": {
+                  "text": "The QL pack definition file."
+                },
+                "properties": {
+                  "tags": [
+                    "CodeQL/LocalPackDefinitionFile"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "name": "codeql/threat-models",
+            "semanticVersion": "1.1.0+a1575b98a8cc19bcfa7bb6cb41be688cb3dae65c",
+            "locations": [
+              {
+                "uri": "file:///opt/actions-runner/_work/_temp/codeql/qlpacks/codeql/javascript-queries/2.4.8/.codeql/libraries/codeql/threat-models/1.1.0/",
+                "description": {
+                  "text": "The QL pack root directory."
+                },
+                "properties": {
+                  "tags": [
+                    "CodeQL/LocalPackRoot"
+                  ]
+                }
+              },
+              {
+                "uri": "file:///opt/actions-runner/_work/_temp/codeql/qlpacks/codeql/javascript-queries/2.4.8/.codeql/libraries/codeql/threat-models/1.1.0/qlpack.yml",
+                "description": {
+                  "text": "The QL pack definition file."
+                },
+                "properties": {
+                  "tags": [
+                    "CodeQL/LocalPackDefinitionFile"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "results": [
+        {
+          "ruleId": "js/sql-injection",
+          "ruleIndex": 0,
+          "rule": {
+            "id": "js/sql-injection",
+            "index": 0
+          },
+          "message": {
+            "text": "This query object depends on a [user-provided value](1)."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/data/user-dao.js",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 91,
+                  "startColumn": 26,
+                  "endLine": 93,
+                  "endColumn": 10
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "3dd80a9c8e2afeb:1",
+            "primaryLocationStartColumnFingerprint": "17"
+          }
+        },
+        {
+          "ruleId": "js/code-injection",
+          "ruleIndex": 1,
+          "rule": {
+            "id": "js/code-injection",
+            "index": 1
+          },
+          "message": {
+            "text": "This code execution depends on a [user-provided value](1)."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/routes/contributions.js",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 32,
+                  "startColumn": 29,
+                  "endColumn": 44
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "823a7ba70c4b046a:1",
+            "primaryLocationStartColumnFingerprint": "20"
+          }
+        },
+        {
+          "ruleId": "js/session-fixation",
+          "ruleIndex": 2,
+          "rule": {
+            "id": "js/session-fixation",
+            "index": 2
+          },
+          "message": {
+            "text": "Route handler does not invalidate session following login."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/routes/index.js",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 34,
+                  "startColumn": 5,
+                  "endColumn": 58
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "2e5793e79c58fb77:1",
+            "primaryLocationStartColumnFingerprint": "0"
+          }
+        }
+      ],
+      "columnKind": "utf16CodeUnits"
+    }
+  ]
+}
