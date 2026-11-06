@@ -9,9 +9,9 @@
 # found. A job fails only if the tool itself errors. The report job combines
 # their results and the gate job alone enforces the pass/fail criteria.
 #
-# The static scans (SAST, secrets, SCA, image) run on GitHub-hosted runners
-# unless the repository variable STATIC_RUNNER is "lab", which moves them to the
-# self-hosted lab runner. Pull requests always use GitHub-hosted runners, so
+# The static scans (both SAST tools, secrets, SCA, image) run on GitHub-hosted
+# runners unless the repository variable STATIC_RUNNER is "lab", which moves them
+# to the self-hosted lab runner. Pull requests always use GitHub-hosted runners, so
 # code that hasn't been merged never runs on the lab VM.
 #
 # Hardening: triggers are push/pull_request only (never pull_request_target, which
@@ -75,6 +75,54 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: semgrep-results
+          path: results/
+
+  codeql:
+    name: SAST (CodeQL)
+    # A second SAST tool, for comparison with Semgrep: CodeQL traces data flow
+    # (taint tracking) where Semgrep mostly matches patterns. Its licence allows
+    # CI use on open-source code hosted on GitHub.com, which this repo is.
+    runs-on: ${{ vars.STATIC_RUNNER == 'lab' && github.event_name != 'pull_request' && fromJSON('["self-hosted", "lab"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # The official bundle: the CLI plus its query packs, so the rules are
+      # pinned along with the binary.
+      CODEQL_VERSION: "2.27.3"
+      CODEQL_SHA256: "64518dc413c8e7b5733fee2489e830a899bb1e3f28c8873b5869d5cc90164c5c"
+      CODEQL_SUITE: codeql/javascript-queries:codeql-suites/javascript-security-extended.qls
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install CodeQL
+        working-directory: ${{ runner.temp }}
+        run: |
+          tarball=codeql-bundle-linux64.tar.gz
+          curl -sfLO "https://github.com/github/codeql-action/releases/download/codeql-bundle-v${CODEQL_VERSION}/$tarball"
+          echo "$CODEQL_SHA256  $tarball" | sha256sum --check
+          tar xzf "$tarball"
+          rm "$tarball"
+          echo "$PWD/codeql" >> "$GITHUB_PATH"
+
+      - name: Scan app/
+        # JavaScript needs no build. Exits 0 when there are findings.
+        # security-extended: all security queries, including lower-precision ones.
+        run: |
+          mkdir -p results
+          codeql database create "$RUNNER_TEMP/codeql-db" --language=javascript \
+            --build-mode=none --source-root=app \
+            --codescanning-config=.github/codeql/codeql-config.yml
+          codeql database analyze "$RUNNER_TEMP/codeql-db" "$CODEQL_SUITE" \
+            --format=sarif-latest --output=results/codeql.sarif
+          # The SARIF records the query pack versions; this records the CLI's.
+          codeql version --format=json > results/codeql-version.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: codeql-results
           path: results/
 
   secrets:
@@ -324,7 +372,8 @@ jobs:
 
   report:
     name: Report (aggregate)
-    needs: [sast, secrets, sca, image-scan, dast]
+    # CodeQL's results are downloaded but not yet part of the report or gate.
+    needs: [sast, codeql, secrets, sca, image-scan, dast]
     # Runs even when a scan job failed or was skipped. A failed scan uploads
     # nothing, and a missing result fails this job as an input error.
     # Fails only if reporting itself fails; the verdict goes to the gate job.

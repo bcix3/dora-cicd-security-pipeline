@@ -1,0 +1,5 @@
+# CodeQL scope, relative to app/. Matches the files Semgrep scans after its
+# default ignores (test/, vendor/), so the two SAST tools see the same code.
+paths-ignore:
+  - test
+  - app/assets/vendor
