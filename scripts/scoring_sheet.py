@@ -12,7 +12,11 @@ Rows, per stage:
   - SAST (Semgrep, CodeQL) and secrets: one per finding (rule + file:line).
   - SCA and container image: one per advisory and package version. Copies of
     the same package at several install paths are one flaw, as in aggregate.py,
-    and are listed together in the location column.
+    and are listed together in the location column. Dependency triage is
+    timed once per package version (D25): `package` names it with its
+    component (app, base or os, kept apart as in aggregate.py), and the
+    package's first row, where its triage minutes go, carries
+    `package_advisories`, the number of advisory rows it covers.
   - DAST: one per alert type per run, located by an example route.
 
 File paths are relative to app/, as in the catalogue and the matching rule.
@@ -28,6 +32,7 @@ import argparse
 import csv
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -42,7 +47,8 @@ STAGES = {  # order and labels as in aggregate.py
 DEPENDENCY_STAGES = ("sca", "image")
 SOURCE_ROOT = "app/"
 COLUMNS = ["finding_id", "run", "stage", "tool", "rule", "title", "location", "cwe",
-           "severity", "catalogue_row", "m6_label", "match_rule", "triage_minutes", "notes"]
+           "severity", "package", "package_advisories",
+           "catalogue_row", "m6_label", "match_rule", "triage_minutes", "notes"]
 
 
 class InputError(Exception):
@@ -86,6 +92,7 @@ def stage_rows(findings, stage):
         row = rows.setdefault(key, {
             "stage": STAGES[stage][0], "tool": STAGES[stage][1], "rule": f["rule"],
             "title": f["title"], "locations": [], "cwe": [], "severity": f["severity"],
+            "package": f"{f['component']}: {f['package']}" if stage in DEPENDENCY_STAGES else "",
         })
         if location(f) not in row["locations"]:
             row["locations"].append(location(f))
@@ -93,11 +100,17 @@ def stage_rows(findings, stage):
     if stage == "dast":
         order = sorted(rows, key=lambda k: (int(k[0]) if k[0].isdigit() else 0, k))
     elif stage in DEPENDENCY_STAGES:
-        # by package ("CVE-x pkg@1.0" -> "pkg@1.0"), as M5 scores per package
-        order = sorted(rows, key=lambda k: (k[0], k[1].split(" ", 1)[-1], k[1]))
+        # by package, as M5 scores and triage is timed per package
+        order = sorted(rows, key=lambda k: (rows[k]["package"], k[1]))
     else:
         order = sorted(rows, key=lambda k: (rows[k]["locations"][0], k))
-    return [rows[k] for k in order]
+    out = [rows[k] for k in order]
+    if stage in DEPENDENCY_STAGES:
+        counts = Counter(r["package"] for r in out)
+        for r in out:
+            if r["package"] in counts:
+                r["package_advisories"] = counts.pop(r["package"])
+    return out
 
 
 def sheet(primary, dast_runs=()):
@@ -110,6 +123,8 @@ def sheet(primary, dast_runs=()):
                 "stage": row["stage"], "tool": row["tool"], "rule": row["rule"],
                 "title": row["title"], "location": "; ".join(sorted(row["locations"])),
                 "cwe": "; ".join(row["cwe"]), "severity": row["severity"],
+                "package": row["package"],
+                "package_advisories": row.get("package_advisories", ""),
             })
 
     for stage in STAGES:

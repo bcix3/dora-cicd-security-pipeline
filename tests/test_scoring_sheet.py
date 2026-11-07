@@ -86,6 +86,25 @@ class TestSheet(unittest.TestCase):
         marked = next(r for r in image if "marked" in r["title"])
         self.assertEqual(marked["location"].count("; "), 1)
 
+    def test_advisory_count_on_each_package_first_row(self):
+        # Triage is timed once per package version, on its first row (D25).
+        deps = [(r["stage"], r["package"], r["package_advisories"]) for r in self.rows
+                if r["package"]]
+        self.assertEqual(deps, [("SCA", "app: marked@0.3.5", 2), ("SCA", "app: marked@0.3.5", ""),
+                                ("Container image", "app: marked@0.3.5", 1),
+                                ("Container image", "os: libssl1.1@1.1.1n-r0", 1)])
+
+    def test_components_are_counted_apart(self):
+        findings = [dep("image", "CVE-1", "npm@6.0.0", "home/node/app/node_modules/npm/x"),
+                    dep("image", "CVE-1", "npm@6.0.0", "usr/local/lib/node_modules/npm/x",
+                        "base"),
+                    dep("image", "CVE-2", "npm@6.0.0", "usr/local/lib/node_modules/npm/x",
+                        "base")]
+        rows = scoring_sheet.stage_rows(findings, "image")
+        self.assertEqual([(r["package"], r.get("package_advisories")) for r in rows],
+                         [("app: npm@6.0.0", 1), ("base: npm@6.0.0", 2),
+                          ("base: npm@6.0.0", None)])
+
     def test_dast_one_row_per_alert_type_with_route(self):
         dast = [r for r in self.rows if r["stage"] == "DAST"]
         self.assertEqual([(r["finding_id"], r["rule"]) for r in dast],
