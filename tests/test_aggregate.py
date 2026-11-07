@@ -8,6 +8,7 @@ Run with:  python3 -m unittest discover -s tests
 
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import shutil
@@ -270,11 +271,6 @@ class TestReport(unittest.TestCase):
         result = json.loads((self.tmp / "aggregated.json").read_text())
         self.assertEqual(result["sbom"]["SCA"]["components"], 3)
 
-    def test_missing_sbom_is_not_an_error(self):
-        (self.tmp / "trivy-image-results" / "sbom-image.cdx.json").unlink()
-        sbom = self.section(self.render(), "SBOM")
-        self.assertIn("| Container image | sbom-image.cdx.json | – | – | not recorded |", sbom)
-
     def test_no_sbom_row_for_a_stage_not_run(self):
         with mock.patch.dict("os.environ", self.ENV), \
                 contextlib.redirect_stdout(io.StringIO()):
@@ -299,6 +295,79 @@ class TestReport(unittest.TestCase):
         report = self.render()
         self.assertIn("2 package versions; fix available for 2 |", report)
         self.assertIn("A fixed version exists for 5 of these 5 advisories.", report)
+
+
+class TestEvidence(unittest.TestCase):
+    ENV = {"GITHUB_SHA": "abcdef1234567", "GITHUB_RUN_ID": "42", "GITHUB_REPOSITORY": "o/r",
+           "GITHUB_SERVER_URL": "https://github.com"}
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        shutil.copytree(FIXTURES, self.tmp, dirs_exist_ok=True)
+        self.addCleanup(shutil.rmtree, self.tmp)
+
+    def run_main(self, *args):
+        with mock.patch.dict("os.environ", self.ENV), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = aggregate.main([str(self.tmp), *args])
+        return rc, err.getvalue()
+
+    def digest(self, name):
+        return hashlib.sha256((self.tmp / name).read_bytes()).hexdigest()
+
+    def test_manifest_lists_every_file_with_size_and_hash(self):
+        self.run_main()
+        manifest = json.loads((self.tmp / "evidence-manifest.json").read_text())
+        paths = [e["path"] for e in manifest["files"]]
+        on_disk = sorted(p.relative_to(self.tmp).as_posix() for p in self.tmp.glob("*-results/**/*")
+                         if p.is_file())
+        self.assertEqual(paths, on_disk + ["aggregated.json"])
+        self.assertIn("trivy-image-results/sbom-image.cdx.json", paths)
+        self.assertNotIn("aggregated-report.md", paths)
+        for e in manifest["files"]:
+            self.assertEqual(e["sha256"], self.digest(e["path"]), e["path"])
+            self.assertEqual(e["size"], (self.tmp / e["path"]).stat().st_size, e["path"])
+        self.assertEqual((manifest["run"], manifest["commit"]), ("42", "abcdef1234567"))
+        self.assertEqual(manifest["tools"]["CodeQL"], "2.27.3")
+        self.assertEqual(manifest["trivy_db"], {"SCA": "2026-10-14T19:14:58.511503573Z"})
+
+    def test_sha256sum_file_covers_files_and_manifest(self):
+        self.run_main()
+        lines = (self.tmp / "evidence-manifest.sha256").read_text().splitlines()
+        sums = dict(reversed(line.split("  ", 1)) for line in lines)
+        self.assertEqual(sums["evidence-manifest.json"], self.digest("evidence-manifest.json"))
+        self.assertEqual(sums["aggregated.json"], self.digest("aggregated.json"))
+        self.assertEqual(len(sums), len(json.loads(
+            (self.tmp / "evidence-manifest.json").read_text())["files"]) + 1)
+
+    def test_report_evidence_record(self):
+        self.run_main()
+        report = (self.tmp / "aggregated-report.md").read_text()
+        record = report.split("## Evidence record\n", 1)[1]
+        self.assertTrue(record.startswith("\nRun [42](https://github.com/o/r/actions/runs/42) · "
+                                          "Commit [abcdef1]"))
+        self.assertIn(f"Manifest `evidence-manifest.json`: SHA-256 "
+                      f"`{self.digest('evidence-manifest.json')}`", record)
+        self.assertIn(f"| `aggregated.json` | {(self.tmp / 'aggregated.json').stat().st_size} | "
+                      f"`{self.digest('aggregated.json')}` |", record)
+
+    def test_missing_sbom_is_an_input_error(self):
+        (self.tmp / "trivy-image-results" / "sbom-image.cdx.json").unlink()
+        rc, err = self.run_main("--report-only")
+        self.assertEqual(rc, 2)
+        self.assertIn("image: ", err)
+        self.assertIn("sbom-image.cdx.json not found", err)
+        for name in ("aggregated.json", "aggregated-report.md", "evidence-manifest.json"):
+            self.assertFalse((self.tmp / name).exists(), name)
+
+    def test_stage_not_run_needs_no_files(self):
+        shutil.rmtree(self.tmp / "trivy-image-results")
+        rc, _ = self.run_main("--not-run", "image")
+        self.assertEqual(rc, 1)
+        paths = [e["path"] for e in json.loads(
+            (self.tmp / "evidence-manifest.json").read_text())["files"]]
+        self.assertFalse(any(p.startswith("trivy-image-results/") for p in paths))
 
 
 class TestGate(unittest.TestCase):

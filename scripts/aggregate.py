@@ -6,12 +6,16 @@ Usage:  aggregate.py RESULTS_DIR [--not-run STAGE ...] [--report-only]
 
 RESULTS_DIR holds one folder per uploaded artifact, the layout produced by
 actions/download-artifact and by `gh run download <run-id> -D RESULTS_DIR`.
-Writes RESULTS_DIR/aggregated-report.md (for the job summary) and
+Writes RESULTS_DIR/aggregated-report.md (for the job summary),
 RESULTS_DIR/aggregated.json (every normalised finding, for mapping to the
-catalogue).
+catalogue) and the evidence record: RESULTS_DIR/evidence-manifest.json (size and
+SHA-256 of every result file, SBOM and aggregated.json) and
+RESULTS_DIR/evidence-manifest.sha256 (the same in `sha256sum -c` format, plus the
+JSON manifest itself).
 
-Exit status: 0 = gate passed, 1 = gate failed, 2 = an input is missing or not in
-the expected format. With --report-only the verdict is only recorded (in
+Exit status: 0 = gate passed, 1 = gate failed, 2 = an input (a result file or
+another expected evidence file, such as an SBOM) is missing or not in the
+expected format. With --report-only the verdict is only recorded (in
 aggregated.json and the report) and a failed gate also exits 0, so that a
 separate step can enforce it. A stage listed with --not-run is reported as not
 run instead of being treated as missing. --previous takes an earlier run's
@@ -19,12 +23,13 @@ aggregated.json and adds the new, resolved and re-rated findings to the report.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Common severity scale, most severe first.
@@ -58,6 +63,9 @@ SAST_STAGES = ("sast", "codeql")
 DEPENDENCY_STAGES = ("sca", "image")
 # CycloneDX SBOMs written next to each dependency stage's results (evidence, not a gate input).
 SBOM_FILES = {"sca": "sbom-deps.cdx.json", "image": "sbom-image.cdx.json"}
+
+MANIFEST_JSON = "evidence-manifest.json"
+MANIFEST_SUMS = "evidence-manifest.sha256"
 ZAP_ALERT_URL = "https://www.zaproxy.org/docs/alerts/{}/"
 CWE_URL = "https://cwe.mitre.org/data/definitions/{}.html"
 
@@ -282,6 +290,48 @@ def sbom_summary(results_dir, stage):
         return None
 
 
+def expected_files(stage):
+    """Files a stage that ran must have produced, relative to the results folder."""
+    main = STAGES[stage][2]
+    if stage in SBOM_FILES:
+        return [main, f"{main.split('/')[0]}/{SBOM_FILES[stage]}"]
+    return [main]
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def evidence_files(results_dir, not_run):
+    """Every file in the downloaded result folders, after checking the expected ones exist."""
+    for stage in STAGES:
+        if stage in not_run:
+            continue
+        for name in expected_files(stage):
+            if not (results_dir / name).is_file():
+                raise InputError(f"{stage}: {results_dir / name} not found")
+    return sorted(p.relative_to(results_dir).as_posix()
+                  for d in results_dir.iterdir() if d.is_dir() and d.name.endswith("-results")
+                  for p in d.rglob("*") if p.is_file())
+
+
+def write_manifest(results_dir, files, record):
+    """Write the evidence manifest (JSON and sha256sum list); return the JSON's SHA-256."""
+    entries = [{"path": name, "size": (results_dir / name).stat().st_size,
+                "sha256": sha256(results_dir / name)} for name in files]
+    manifest = dict(record, created=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    files=entries)
+    (results_dir / MANIFEST_JSON).write_text(json.dumps(manifest, indent=2) + "\n")
+    digest = sha256(results_dir / MANIFEST_JSON)
+    sums = [f"{e['sha256']}  {e['path']}" for e in entries] + [f"{digest}  {MANIFEST_JSON}"]
+    (results_dir / MANIFEST_SUMS).write_text("\n".join(sums) + "\n")
+    return entries, digest
+
+
 def tool_version(results_dir, stage):
     # Provenance only: a missing version is reported as such, not an error.
     folder, name = STAGES[stage][2].split("/")
@@ -470,7 +520,7 @@ def run_line(tools, dbs):
     return " · ".join(parts)
 
 
-def report(results_dir, findings, not_run, passed, previous=None):
+def report(results_dir, findings, not_run, passed, previous=None, evidence=None):
     by_stage = {s: [f for f in findings if f["stage"] == s] for s in STAGES}
     blocking = Counter(f["stage"] for f in findings if f["severity"] in GATE_FAIL_ON)
     commit = os.environ.get("GITHUB_SHA", "")[:7]
@@ -649,6 +699,19 @@ def report(results_dir, findings, not_run, passed, previous=None):
         name = label if tool in label else f"{label} ({tool})"
         lines += details(f"{name}: {count}",
                          finding_table(fs, with_fixed=stage in DEPENDENCY_STAGES, key=key))
+
+    if evidence:
+        entries, digest = evidence
+        run = os.environ.get("GITHUB_RUN_ID")
+        lines += ["", "## Evidence record", "",
+                  (f"Run {link(run, run_url())} · " if run else "") + run_line(tools, dbs), "",
+                  f"Manifest `{MANIFEST_JSON}`: SHA-256 `{digest}`. It lists the size and "
+                  f"SHA-256 of all {len(entries)} files below; `{MANIFEST_SUMS}` holds the same "
+                  "in `sha256sum -c` format. Both are in the `aggregate-results` artifact; "
+                  "paths are relative to the downloaded results folder."]
+        rows = ["| File | Size (bytes) | SHA-256 |", "|---|--:|---|"]
+        rows += [f"| `{e['path']}` | {e['size']} | `{e['sha256']}` |" for e in entries]
+        lines += details(f"{len(entries)} files", rows)
     return "\n".join(lines) + "\n"
 
 
@@ -680,11 +743,15 @@ def main(argv=None):
         print(f"::error::aggregate: previous run: {e}", file=sys.stderr)
         return 2
 
+    try:
+        files = evidence_files(args.results_dir, args.not_run)
+    except InputError as e:
+        print(f"::error::aggregate: {e}", file=sys.stderr)
+        return 2
+
     blocking = Counter(f["stage"] for f in findings if f["severity"] in GATE_FAIL_ON)
     passed = not blocking
     tools, dbs = provenance(args.results_dir, args.not_run)
-    (args.results_dir / "aggregated-report.md").write_text(
-        report(args.results_dir, findings, args.not_run, passed, previous))
     (args.results_dir / "aggregated.json").write_text(json.dumps({
         # Set in GitHub Actions; identifies this run when a later one compares.
         "run": os.environ.get("GITHUB_RUN_ID"),
@@ -701,6 +768,16 @@ def main(argv=None):
         "blocking": {STAGES[s][0]: n for s, n in blocking.items()},
         "findings": findings,
     }, indent=2) + "\n")
+    # The evidence record covers the inputs and aggregated.json, so it comes last.
+    evidence = write_manifest(args.results_dir, files + ["aggregated.json"], {
+        "run": os.environ.get("GITHUB_RUN_ID"),
+        "commit": os.environ.get("GITHUB_SHA"),
+        "url": run_url(),
+        "tools": {STAGES[s][1]: v for s, v in tools.items()},
+        "trivy_db": {STAGES[s][0]: d for s, d in dbs.items()},
+    })
+    (args.results_dir / "aggregated-report.md").write_text(
+        report(args.results_dir, findings, args.not_run, passed, previous, evidence))
 
     if passed:
         print("Gate PASSED: no " + "/".join(GATE_FAIL_ON) + " findings")

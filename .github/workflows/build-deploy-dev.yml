@@ -401,6 +401,8 @@ jobs:
     permissions:
       contents: read
       actions: read  # previous run's aggregate-results
+      id-token: write  # signing identity for the evidence attestation
+      attestations: write  # store the attestation
     outputs:
       verdict: ${{ steps.aggregate.outputs.verdict }}
       blocking: ${{ steps.aggregate.outputs.blocking }}
@@ -458,11 +460,30 @@ jobs:
           print(f"fail_on={'/'.join(r['fail_on'])}")
           PY
 
+      - name: Attest the evidence record
+        # Signs every file in the evidence manifest (one attestation, logged in the
+        # public Sigstore transparency log). Pull requests get no signing identity.
+        id: attest
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-checksums: results/evidence-manifest.sha256
+          show-summary: false
+
       - name: Job summary
         if: always()
+        env:
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+          EVENT: ${{ github.event_name }}
         run: |
           if [[ -f results/aggregated-report.md ]]; then
             cat results/aggregated-report.md >> "$GITHUB_STEP_SUMMARY"
+            # The report ends with the evidence record, so this line completes it.
+            if [[ -n $ATTESTATION_URL ]]; then
+              echo -e "\nAttestation of all files above: $ATTESTATION_URL" >> "$GITHUB_STEP_SUMMARY"
+            elif [[ $EVENT == pull_request ]]; then
+              echo -e "\nNot attested: pull requests get no signing identity." >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
@@ -472,6 +493,8 @@ jobs:
           path: |
             results/aggregated-report.md
             results/aggregated.json
+            results/evidence-manifest.json
+            results/evidence-manifest.sha256
           if-no-files-found: ignore
 
   gate:
