@@ -1,0 +1,7 @@
+# Public key of the build-deploy-dev pipeline, which signs each run's evidence record
+# (evidence-manifest.sha256). The private key exists only as the repository secret
+# EVIDENCE_SIGNING_KEY. Check a run's aggregate-results with:
+#   ssh-keygen -Y verify -f evidence-allowed-signers -I build-deploy-dev -n dora-evidence \
+#     -s evidence-manifest.sha256.sig < evidence-manifest.sha256
+# To rotate, add the new key and give this one valid-before="YYYYMMDD".
+build-deploy-dev namespaces="dora-evidence",valid-after="20261107" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIINmzBI6E0W8Bwg7Y+6t7Bff5EiW3sVNjuVE+zLqxB+h dora-evidence
