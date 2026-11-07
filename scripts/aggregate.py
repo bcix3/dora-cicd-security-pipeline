@@ -56,6 +56,8 @@ CODEQL_HELP_URL = "https://codeql.github.com/codeql-query-help/javascript/{}/"
 
 SAST_STAGES = ("sast", "codeql")
 DEPENDENCY_STAGES = ("sca", "image")
+# CycloneDX SBOMs written next to each dependency stage's results (evidence, not a gate input).
+SBOM_FILES = {"sca": "sbom-deps.cdx.json", "image": "sbom-image.cdx.json"}
 ZAP_ALERT_URL = "https://www.zaproxy.org/docs/alerts/{}/"
 CWE_URL = "https://cwe.mitre.org/data/definitions/{}.html"
 
@@ -261,6 +263,22 @@ def trivy_db_date(results_dir, artifact):
         info = json.loads((results_dir / artifact / "trivy-db.json").read_text())
         return info["VulnerabilityDB"]["UpdatedAt"]
     except (OSError, ValueError, KeyError):
+        return None
+
+
+def sbom_summary(results_dir, stage):
+    """Component counts of a stage's SBOM by package type (npm, apk, ...), or None."""
+    folder = STAGES[stage][2].split("/")[0]
+    path = results_dir / folder / SBOM_FILES[stage]
+    try:
+        raw = json.loads(path.read_text())
+        components = raw["components"]
+        # "pkg:npm/express@4.17.1" -> "npm"; the OS and the scanned target have no purl.
+        types = Counter(c["purl"].split(":", 1)[1].split("/", 1)[0]
+                        for c in components if c.get("purl"))
+        return {"file": SBOM_FILES[stage], "format": f"{raw['bomFormat']} {raw['specVersion']}",
+                "components": sum(types.values()), "types": dict(types.most_common())}
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError):
         return None
 
 
@@ -604,6 +622,21 @@ def report(results_dir, findings, not_run, passed, previous=None):
                         f"{cell(at['codeql'].get(loc))} |")
         lines += details(f"All {len(semgrep | codeql)} locations", rows)
 
+    sboms = {s: sbom_summary(results_dir, s) for s in DEPENDENCY_STAGES if s not in not_run}
+    if sboms:
+        lines += ["", "## SBOM", "",
+                  "Software bill of materials for each dependency stage, kept with the "
+                  "results as evidence. Not a gate input.", "",
+                  "| Stage | File | Format | Components | By package type |",
+                  "|---|---|---|--:|---|"]
+        for s, b in sboms.items():
+            if b is None:
+                lines.append(f"| {STAGES[s][0]} | {SBOM_FILES[s]} | – | – | not recorded |")
+            else:
+                lines.append(f"| {STAGES[s][0]} | `{b['file']}` | {b['format']} | "
+                             f"{b['components']} | "
+                             + ", ".join(f"{t} {n}" for t, n in b["types"].items()) + " |")
+
     lines += ["", "## Details"]
     for stage, (label, tool, _) in STAGES.items():
         fs = by_stage[stage]
@@ -663,6 +696,8 @@ def main(argv=None):
         "stages": [s for s in STAGES if s not in args.not_run],
         "tools": {STAGES[s][1]: v for s, v in tools.items()},
         "trivy_db": {STAGES[s][0]: d for s, d in dbs.items()},
+        "sbom": {STAGES[s][0]: sbom_summary(args.results_dir, s)
+                 for s in DEPENDENCY_STAGES if s not in args.not_run},
         "blocking": {STAGES[s][0]: n for s, n in blocking.items()},
         "findings": findings,
     }, indent=2) + "\n")

@@ -1,0 +1,255 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.7",
+  "serialNumber": "urn:uuid:3dbec43e-e14a-4a08-ba3f-e2eef76e6da9",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-11-07T10:38:37+00:00",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "manufacturer": {
+            "name": "Aqua Security Software Ltd."
+          },
+          "group": "aquasecurity",
+          "name": "trivy",
+          "version": "0.75.0"
+        }
+      ]
+    },
+    "component": {
+      "bom-ref": "pkg:oci/dora-cicd-security-pipeline@sha256:6854c3e5f94e99aa8997724e70a2909a718e3e80824769fdd9f0fcbd1188c901?arch=amd64&repository_url=ghcr.io%2Fbcix3%2Fdora-cicd-security-pipeline",
+      "type": "container",
+      "name": "ghcr.io/bcix3/dora-cicd-security-pipeline@sha256:6854c3e5f94e99aa8997724e70a2909a718e3e80824769fdd9f0fcbd1188c901",
+      "purl": "pkg:oci/dora-cicd-security-pipeline@sha256:6854c3e5f94e99aa8997724e70a2909a718e3e80824769fdd9f0fcbd1188c901?arch=amd64&repository_url=ghcr.io%2Fbcix3%2Fdora-cicd-security-pipeline",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:DiffID",
+          "value": "sha256:4fc242d58285699eca05db3cc7c7122a2b8e014d9481f323bd9277baacfa0628"
+        },
+        {
+          "name": "aquasecurity:trivy:DiffID",
+          "value": "sha256:607aa91dc98a9bfd135dc2b4bc424d5324e679364eec9159f05bc333cb6772f3"
+        },
+        {
+          "name": "aquasecurity:trivy:DiffID",
+          "value": "sha256:7f30cde3f69985ddd9e664d8b5a3514f3d66103c43261f1cf1d9f11c2ac55f4c"
+        },
+        {
+          "name": "aquasecurity:trivy:DiffID",
+          "value": "sha256:ae8370c7423c8064f486558f191bd14f1b6d31c2eab0804fb97fb7af6311e23e"
+        },
+        {
+          "name": "aquasecurity:trivy:DiffID",
+          "value": "sha256:c5853bddca609ecbdaf6218d77598978f88aa6aeb37899096101bc6a3ef776bc"
+        },
+        {
+          "name": "aquasecurity:trivy:DiffID",
+          "value": "sha256:d24a09a1955c16c25ee44140a5be71d1c9a27fa527f3cb75a2103e597799ed23"
+        },
+        {
+          "name": "aquasecurity:trivy:DiffID",
+          "value": "sha256:dfd8c046c602fe809a5c48bd19e894c53ad36d39d7ea4ff13ee2fa2447e82d79"
+        },
+        {
+          "name": "aquasecurity:trivy:DiffID",
+          "value": "sha256:fe810f5902ccb48141678360f61011303043df5eb773713c2eaf8c56948eae9a"
+        },
+        {
+          "name": "aquasecurity:trivy:ImageID",
+          "value": "sha256:2b6a1a78a275e2802378cc0d6bdf4cbd49bb2bcc467eb8e753147cfe16995568"
+        },
+        {
+          "name": "aquasecurity:trivy:Reference",
+          "value": "ghcr.io/bcix3/dora-cicd-security-pipeline@sha256:6854c3e5f94e99aa8997724e70a2909a718e3e80824769fdd9f0fcbd1188c901"
+        },
+        {
+          "name": "aquasecurity:trivy:RepoDigest",
+          "value": "ghcr.io/bcix3/dora-cicd-security-pipeline@sha256:6854c3e5f94e99aa8997724e70a2909a718e3e80824769fdd9f0fcbd1188c901"
+        },
+        {
+          "name": "aquasecurity:trivy:SchemaVersion",
+          "value": "2"
+        },
+        {
+          "name": "aquasecurity:trivy:Size",
+          "value": "118953984"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "bom-ref": "3dc70f20-922c-4674-b9df-3ed75128dc1f",
+      "type": "operating-system",
+      "name": "alpine",
+      "version": "3.15.4",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:Class",
+          "value": "os-pkgs"
+        },
+        {
+          "name": "aquasecurity:trivy:Type",
+          "value": "alpine"
+        }
+      ]
+    },
+    {
+      "bom-ref": "pkg:apk/alpine/alpine-baselayout@3.2.0-r18?arch=x86_64&distro=3.15.4",
+      "type": "library",
+      "supplier": {
+        "name": "Natanael Copa <ncopa@alpinelinux.org>"
+      },
+      "name": "alpine-baselayout",
+      "version": "3.2.0-r18",
+      "hashes": [
+        {
+          "alg": "SHA-1",
+          "content": "132992eab020986b3b5d886a77212889680467a0"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-2.0-only"
+          }
+        }
+      ],
+      "purl": "pkg:apk/alpine/alpine-baselayout@3.2.0-r18?arch=x86_64&distro=3.15.4",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:LayerDiffID",
+          "value": "sha256:4fc242d58285699eca05db3cc7c7122a2b8e014d9481f323bd9277baacfa0628"
+        },
+        {
+          "name": "aquasecurity:trivy:LayerDigest",
+          "value": "sha256:df9b9388f04ad6279a7410b85cedfdcb2208c0a003da7ab5613af71079148139"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "alpine-baselayout@3.2.0-r18"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "alpine"
+        },
+        {
+          "name": "aquasecurity:trivy:SrcName",
+          "value": "alpine-baselayout"
+        },
+        {
+          "name": "aquasecurity:trivy:SrcVersion",
+          "value": "3.2.0-r18"
+        }
+      ]
+    },
+    {
+      "bom-ref": "02a94643-04ac-44e5-bec8-4ff60ec278fc",
+      "type": "library",
+      "name": "decamelize",
+      "version": "1.2.0",
+      "hashes": [
+        {
+          "alg": "SHA-1",
+          "content": "138ae8a7f798334f6441fcd34df3cc13831ffcbc"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/decamelize@1.2.0",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:FilePath",
+          "value": "usr/local/lib/node_modules/npm/node_modules/decamelize/package.json"
+        },
+        {
+          "name": "aquasecurity:trivy:LayerDiffID",
+          "value": "sha256:dfd8c046c602fe809a5c48bd19e894c53ad36d39d7ea4ff13ee2fa2447e82d79"
+        },
+        {
+          "name": "aquasecurity:trivy:LayerDigest",
+          "value": "sha256:3bf6d738020517f4622814e8c21db4b4aaa78ae7cab4e4f872c11696886c6285"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "decamelize@1.2.0"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "node-pkg"
+        }
+      ]
+    },
+    {
+      "bom-ref": "0361fb54-030a-4f43-aba1-b4662f0d3810",
+      "type": "library",
+      "name": "function-bind",
+      "version": "1.1.1",
+      "hashes": [
+        {
+          "alg": "SHA-1",
+          "content": "3f136d5e5adbb1c37a849c7d813d7164b1ba8eae"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:npm/function-bind@1.1.1",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:FilePath",
+          "value": "home/node/app/node_modules/function-bind/package.json"
+        },
+        {
+          "name": "aquasecurity:trivy:LayerDiffID",
+          "value": "sha256:d24a09a1955c16c25ee44140a5be71d1c9a27fa527f3cb75a2103e597799ed23"
+        },
+        {
+          "name": "aquasecurity:trivy:LayerDigest",
+          "value": "sha256:c787aec7c8bac78bfa4ebd9ea06c87a82904e8c22b742b6a40a012d737d96002"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgID",
+          "value": "function-bind@1.1.1"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "node-pkg"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "02a94643-04ac-44e5-bec8-4ff60ec278fc",
+      "dependsOn": []
+    },
+    {
+      "ref": "0361fb54-030a-4f43-aba1-b4662f0d3810",
+      "dependsOn": []
+    },
+    {
+      "ref": "3dc70f20-922c-4674-b9df-3ed75128dc1f",
+      "dependsOn": [
+        "pkg:apk/alpine/alpine-baselayout@3.2.0-r18?arch=x86_64&distro=3.15.4"
+      ]
+    },
+    {
+      "ref": "pkg:apk/alpine/alpine-baselayout@3.2.0-r18?arch=x86_64&distro=3.15.4",
+      "dependsOn": []
+    }
+  ],
+  "vulnerabilities": []
+}

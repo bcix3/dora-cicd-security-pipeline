@@ -261,6 +261,27 @@ class TestReport(unittest.TestCase):
         self.assertEqual(len(rows), 5)
         self.assertTrue(rows[-1].startswith("| [app/server.js:78]"))  # sorted by path, line
 
+    def test_sbom_section(self):
+        sbom = self.section(self.render(), "SBOM")
+        self.assertIn("| SCA | `sbom-deps.cdx.json` | CycloneDX 1.7 | 3 | npm 3 |", sbom)
+        # The OS itself has no purl, so it isn't counted as a package.
+        self.assertIn("| Container image | `sbom-image.cdx.json` | CycloneDX 1.7 | 3 | "
+                      "npm 2, apk 1 |", sbom)
+        result = json.loads((self.tmp / "aggregated.json").read_text())
+        self.assertEqual(result["sbom"]["SCA"]["components"], 3)
+
+    def test_missing_sbom_is_not_an_error(self):
+        (self.tmp / "trivy-image-results" / "sbom-image.cdx.json").unlink()
+        sbom = self.section(self.render(), "SBOM")
+        self.assertIn("| Container image | sbom-image.cdx.json | – | – | not recorded |", sbom)
+
+    def test_no_sbom_row_for_a_stage_not_run(self):
+        with mock.patch.dict("os.environ", self.ENV), \
+                contextlib.redirect_stdout(io.StringIO()):
+            aggregate.main([str(self.tmp), "--not-run", "image"])
+        sbom = self.section((self.tmp / "aggregated-report.md").read_text(), "SBOM")
+        self.assertNotIn("Container image", sbom)
+
     def test_zap_readability(self):
         dast = self.render().split("DAST (ZAP baseline)", 1)[1]
         self.assertIn("| Medium, confidence Medium | [Missing Anti-clickjacking Header]"

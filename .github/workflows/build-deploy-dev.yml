@@ -199,6 +199,13 @@ jobs:
           # record which one this scan used.
           trivy version --format json > results/trivy-db.json
 
+      - name: SBOM of app/ dependencies
+        # A separate run, so the scan above stays comparable with earlier runs.
+        # CycloneDX output lists components only; it needs no vulnerability DB.
+        run: |
+          trivy fs --format cyclonedx --no-progress --skip-version-check \
+            --output results/sbom-deps.cdx.json app
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: trivy-deps-results
@@ -275,6 +282,18 @@ jobs:
           trivy image --image-src remote --scanners vuln --no-progress --skip-version-check \
             --format json --output results/trivy-image.json "${IMAGE%:*}@${DIGEST}"
           trivy version --format json > results/trivy-db.json
+
+      - name: SBOM of the pushed image
+        # Same digest as the scan above; a separate run for the same reason as in sca.
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          TRIVY_CACHE_DIR: ${{ runner.temp }}/trivy-cache
+        run: |
+          trivy image --image-src remote --format cyclonedx --no-progress --skip-version-check \
+            --output results/sbom-image.cdx.json "${IMAGE%:*}@${DIGEST}"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
