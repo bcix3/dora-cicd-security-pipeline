@@ -2,6 +2,13 @@
 #
 # Nothing is rebuilt: prod receives the same image that was tested in dev.
 # Leave image_tag blank to promote whatever dev is currently running.
+#
+# Promotion is gated on the security pipeline (DORA Art. 24(5)): the check job
+# finds the build-deploy-dev run that scanned this exact image digest and reads
+# its "Security gate" result. A passed gate is promoted. A failed gate is refused
+# unless risk_acceptance gives a reason, which is recorded with the approver. No
+# gate result for the image means refused. Every decision, including refusals, is
+# recorded in the job summary and the promotion-record artifact.
 
 name: deploy-prod
 
@@ -12,25 +19,27 @@ on:
         description: "Image tag to promote, e.g. sha-<commit>. Blank = whatever dev is running."
         required: false
         default: ""
+      risk_acceptance:
+        description: "Needed only if the image failed the security gate: why it may go to prod anyway (min. 20 characters)."
+        required: false
+        default: ""
 
 permissions:
   contents: read
-  packages: read
 
 concurrency:
   group: deploy-prod
   cancel-in-progress: false
 
 jobs:
-  deploy-prod:
+  resolve:
+    # On the lab VM, the only place that can see what dev is running.
     runs-on: [self-hosted, lab]
-    timeout-minutes: 10
-    environment: prod
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      image: ${{ steps.image.outputs.image }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          persist-credentials: false
-
       - name: Resolve image
         id: image
         env:
@@ -42,11 +51,111 @@ jobs:
             cid=$(docker ps -q \
               --filter label=com.docker.compose.project=nodegoat-dev \
               --filter label=com.docker.compose.service=web)
-            [[ -n $cid ]] || { echo "dev is not running; pass image_tag explicitly" >&2; exit 1; }
+            [[ -n $cid ]] || { echo "::error::dev is not running; pass image_tag explicitly"; exit 1; }
             image=$(docker inspect --format '{{.Config.Image}}' "$cid")
           fi
-          echo "Promoting $image to prod"
+          echo "Image to promote: $image"
           echo "image=$image" >> "$GITHUB_OUTPUT"
+
+  check:
+    name: Check security gate
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read  # build runs, their jobs and artifacts
+      packages: read  # the image's digest in GHCR
+    outputs:
+      digest: ${{ steps.find.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Find the build run that scanned this image
+        # Matched by digest, not tag: rerunning a commit's build pushes a new image
+        # under the same tag. The image scan records the digest it scanned.
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.resolve.outputs.image }}
+        run: |
+          mkdir -p evidence
+          if [[ ! ${IMAGE##*:} =~ ^sha-([0-9a-f]{40})$ ]]; then
+            echo "::warning::$IMAGE is not tagged sha-<commit>, so no build run can be found"
+            exit 0
+          fi
+          commit=${BASH_REMATCH[1]}
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          digest=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' | jq -r .digest) || true
+          if [[ ! $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::warning::$IMAGE not found in the registry"
+            exit 0
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Image $IMAGE is $digest (commit $commit)"
+          for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build-deploy-dev.yml/runs?head_sha=$commit&status=completed&per_page=50" \
+                         --jq '.workflow_runs[].id'); do
+            gh run download "$run" -R "$GITHUB_REPOSITORY" -n trivy-image-results -D "scan/$run" 2>/dev/null || continue
+            scanned=$(jq -r .ArtifactName "scan/$run/trivy-image.json")
+            echo "Run $run scanned $scanned"
+            [[ $scanned == *"@$digest" ]] || continue
+            gate=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?filter=latest" \
+                     --jq '.jobs[] | select(.name == "Security gate") | .conclusion')
+            gh run download "$run" -R "$GITHUB_REPOSITORY" -n aggregate-results -D evidence 2>/dev/null \
+              || echo "::warning::run $run has no aggregate-results (expired?); using the gate job only"
+            echo "build_run=$run" >> "$GITHUB_OUTPUT"
+            echo "gate=$gate" >> "$GITHUB_OUTPUT"
+            echo "Build run $run, Security gate: ${gate:-no result}"
+            exit 0
+          done
+          echo "::warning::no completed build run scanned $digest"
+
+      - name: Decide
+        env:
+          IMAGE: ${{ needs.resolve.outputs.image }}
+          DIGEST: ${{ steps.find.outputs.digest }}
+          COMMIT: ${{ steps.find.outputs.commit }}
+          GATE: ${{ steps.find.outputs.gate }}
+          BUILD_RUN: ${{ steps.find.outputs.build_run }}
+          BUILD_RUN_URL: ${{ steps.find.outputs.build_run && format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, steps.find.outputs.build_run) || '' }}
+          AGGREGATED: evidence/aggregated.json
+          MANIFEST: evidence/evidence-manifest.json
+          RISK_ACCEPTANCE: ${{ inputs.risk_acceptance }}
+          APPROVER: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          rc=0
+          python3 scripts/promotion.py record || rc=$?
+          cat record/promotion-record.md >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: promotion-record
+          path: record/
+          if-no-files-found: ignore
+
+  deploy-prod:
+    needs: [resolve, check]
+    runs-on: [self-hosted, lab]
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0
         with:
@@ -55,4 +164,19 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Deploy to prod
-        run: scripts/deploy.sh prod "${{ steps.image.outputs.image }}"
+        # By digest, so prod runs exactly the bytes the check job approved.
+        env:
+          IMAGE: ${{ needs.resolve.outputs.image }}
+          DIGEST: ${{ needs.check.outputs.digest }}
+        run: |
+          scripts/deploy.sh prod "${IMAGE%:*}@${DIGEST}"
+          echo "Deployed \`${IMAGE%:*}@${DIGEST}\` to prod at $(date -u +%Y-%m-%dT%H:%M:%SZ)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check NodeGoat is bound to loopback only
+        run: |
+          docker ps --filter label=com.docker.compose.service=web \
+            --format '{{.Label "com.docker.compose.project"}}: {{.Ports}}' | tee "$RUNNER_TEMP/ports.txt"
+          if grep -oE '[^ ,]+->' "$RUNNER_TEMP/ports.txt" | grep -qv '^127\.0\.0\.1:'; then
+            echo "::error::a NodeGoat port is published beyond 127.0.0.1"
+            exit 1
+          fi
